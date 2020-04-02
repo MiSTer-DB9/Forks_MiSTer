@@ -1,0 +1,16 @@
+name: Setup CI/CD
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup CI/CD on Forks
+      run: ./.github/setup_cicd.sh
+      env:
+        GITHUB_USER: theypsilon
+        GITHUB_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}

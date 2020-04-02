@@ -1,0 +1,17 @@
+name: Sync with upstream + Release
+
+on:
+  repository_dispatch:
+    types: [sync_release]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Sync + Release
+      run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
