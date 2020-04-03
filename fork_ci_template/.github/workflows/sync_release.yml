@@ -1,4 +1,4 @@
-name: Sync with upstream + Release
+name: Sync + Release
 
 on:
   repository_dispatch:
@@ -11,7 +11,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Sync + Release
+    - name: Sync with upstream + Release
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}

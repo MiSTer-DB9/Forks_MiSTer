@@ -15,7 +15,7 @@ sync_fork() {
     fi
 
     local FORK_DISPATCH_URL="https://api.github.com/repos/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}/dispatches"
-
+    echo
     echo "Fetching upstream:"
     git remote remove upstream 2> /dev/null || true
     git remote add upstream ${UPSTREAM_REPO}

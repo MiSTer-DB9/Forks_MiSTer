@@ -39,7 +39,7 @@ for sec in config.sections():
 ")
 
 if [ $# -eq 0 ]; then
-    echo "No arguments supplied."
+    >&2 echo "No arguments supplied."
     exit 1
 fi
 

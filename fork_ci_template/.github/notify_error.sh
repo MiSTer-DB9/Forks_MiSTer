@@ -5,7 +5,7 @@ set -euo pipefail
 SENDER="jose@josebg.com"
 
 if (( "$#" < 2 )); then
-    echo "Must run $0 REASON emails+"
+    >&2 echo "Must run $0 REASON emails+"
     exit 1
 fi
 

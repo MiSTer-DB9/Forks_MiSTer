@@ -19,11 +19,11 @@ setup_cicd_on_fork() {
         exit 1
     fi
     local FORK_PUSH_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}.git"
-
+    echo
     echo "Fetching fork:"
     local TEMP_DIR="$(mktemp -d)"
     pushd ${TEMP_DIR} > /dev/null 2>&1
-    git init
+    git init > /dev/null 2>&1
     git remote add fork ${FORK_REPO}
     git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 fork
     git checkout -qf remotes/fork/master -b fork_master

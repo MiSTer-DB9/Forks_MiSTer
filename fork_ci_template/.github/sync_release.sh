@@ -12,6 +12,8 @@ git remote add upstream ${UPSTREAM_REPO}
 git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
 git checkout -qf remotes/upstream/master
 RELEASE_FILE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
+
+echo
 echo "Release '${RELEASE_FILE}' found."
 
 git fetch origin --unshallow 2> /dev/null || true

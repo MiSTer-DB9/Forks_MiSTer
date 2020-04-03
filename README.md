@@ -4,7 +4,7 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 ### Github Actions
 
 1. [Setup CI/CD](.github/workflows/setup_cicd.yml): Delivering CI/CD code to all forks repositories when necessary. Running on push/pull_request to this repository.
-2. [Sync Forks](.github/workflows/sync_forks.yml): Scheduler every third hour, that cheks if the upstream has a newer release, and it that case tells the fork to sync with it.
+2. [Sync Forks](.github/workflows/sync_forks.yml): Scheduler every third hour, that cheks if the upstream has a newer release, and in that case tells the fork to sync with it.
 
 ### Scripts
 
