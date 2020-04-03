@@ -14,7 +14,7 @@ git checkout -qf remotes/upstream/master
 RELEASE_FILE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
 COMMIT_TO_MERGE="$(git log -n 1 --pretty=format:%H -- releases/${RELEASE_FILE})"
 echo
-echo "Release '${RELEASE_FILE}' found."
+echo "Release '${RELEASE_FILE}' found, from commit ${COMMIT_TO_MERGE}."
 
 git fetch origin --unshallow 2> /dev/null || true
 git checkout -qf master

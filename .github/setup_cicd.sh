@@ -55,7 +55,7 @@ setup_cicd_on_fork() {
         echo
         git config --global user.email "theypsilon@gmail.com"
         git config --global user.name "The CI/CD Bot"
-        git commit -m "BOT: Fork CI/CD setup changes." -m "From: https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+        git commit -m "BOT: Fork CI/CD setup changes." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
         git push ${FORK_PUSH_URL} fork_master:master
         echo
         echo "New fork ci/cd ready to be used."

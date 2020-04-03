@@ -45,7 +45,7 @@ sync_fork() {
     echo "Upstream -> ${LAST_UPSTREAM_RELEASE} (Year ${YEAR_UPSTREAM}, month ${MONTH_UPSTREAM}, day ${DAY_UPSTREAM})"
     echo "Fork     -> ${LAST_FORK_RELEASE} (Year ${YEAR_FORK}, month ${MONTH_FORK}, day ${DAY_FORK})"
 
-    if (( $YEAR_UPSTREAM > $YEAR_FORK )) || (( $MONTH_UPSTREAM > $MONTH_FORK )) || (( $DAY_UPSTREAM > $DAY_FORK )) ; then
+    if (( ${YEAR_UPSTREAM#0} > ${YEAR_FORK#0} )) || (( ${MONTH_UPSTREAM#0} > ${MONTH_FORK#0} )) || (( ${DAY_UPSTREAM#0} > ${DAY_FORK#0} )) ; then
         echo "It's more recent."
         echo
         echo "Sending sync request to fork:"
