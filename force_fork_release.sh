@@ -59,7 +59,7 @@ for fork in $@
 do
     echo "Forcing release of ${fork}..."
     force_release_fork $fork
-    echo
+    echo; echo; echo
 done
 
 echo "DONE."

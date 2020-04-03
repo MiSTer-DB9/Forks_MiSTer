@@ -12,7 +12,7 @@ git remote add upstream ${UPSTREAM_REPO}
 git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
 git checkout -qf remotes/upstream/master
 RELEASE_FILE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
-
+COMMIT_TO_MERGE="$(git log -n 1 --pretty=format:%H -- releases/${RELEASE_FILE})"
 echo
 echo "Release '${RELEASE_FILE}' found."
 
@@ -34,7 +34,7 @@ fi
 
 echo
 echo "Syncing with upstream:"
-git merge --no-commit remotes/upstream/master || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" $@
+git merge --no-commit ${COMMIT_TO_MERGE} || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" $@
 echo
 echo "Build start:"
 docker build -t artifact . || ./.github/notify_error.sh "COMPILATION ERROR" $@

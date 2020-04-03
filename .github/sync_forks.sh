@@ -81,7 +81,7 @@ for fork in ${Forks[syncing_forks]}
 do
     echo "Syncing ${fork}..."
     sync_fork $fork
-    echo
+    echo; echo; echo
 done
 
 echo "DONE."

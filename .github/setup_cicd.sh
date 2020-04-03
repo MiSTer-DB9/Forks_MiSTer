@@ -82,7 +82,7 @@ for fork in ${Forks[syncing_forks]}
 do
     echo "Setting up ${fork} CI/CD..."
     setup_cicd_on_fork $fork
-    echo
+    echo; echo; echo
 done
 
 echo "DONE."
