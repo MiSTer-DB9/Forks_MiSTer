@@ -32,9 +32,9 @@ sync_fork() {
     local LAST_FORK_RELEASE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
 
     [[ ${LAST_UPSTREAM_RELEASE} =~ ^.*_([0-9]{4})([0-9]{2})([0-9]{2})\.rbf$ ]] && true
-    local YEAR_UPSTREAM=${BASH_REMATCH[1]:-0}
-    local MONTH_UPSTREAM=${BASH_REMATCH[2]:-0}
-    local DAY_UPSTREAM=${BASH_REMATCH[3]:-0}
+    local YEAR_UPSTREAM=${BASH_REMATCH[1]}
+    local MONTH_UPSTREAM=${BASH_REMATCH[2]}
+    local DAY_UPSTREAM=${BASH_REMATCH[3]}
 
     [[ ${LAST_FORK_RELEASE} =~ ^.*_([0-9]{4})([0-9]{2})([0-9]{2})\.rbf$ ]] && true
     local YEAR_FORK=${BASH_REMATCH[1]:-0}
