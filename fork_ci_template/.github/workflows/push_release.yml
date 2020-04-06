@@ -1,12 +1,6 @@
 name: Push release
 
-on:
-  push:
-    branches:
-      - <<FORK_DEV_BRANCH>>
-  pull_request:
-    branches:
-      - <<FORK_DEV_BRANCH>>
+on: [push, pull_request]
 
 jobs:
   build:
