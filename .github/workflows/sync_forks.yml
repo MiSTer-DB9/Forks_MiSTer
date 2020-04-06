@@ -14,5 +14,5 @@ jobs:
     - name: Sync Forks
       run: ./.github/sync_forks.sh
       env:
-        GITHUB_USER: theypsilon
-        GITHUB_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        DISPATCH_USER: theypsilon
+        DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}

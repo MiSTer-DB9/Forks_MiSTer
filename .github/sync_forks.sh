@@ -20,7 +20,7 @@ sync_fork() {
     local CORE_NAME="${fork[release_core_name]}"
     local UPSTREAM_REPO="${fork[upstream_repo]}"
     local FORK_REPO="${fork[fork_repo]}"
-    local FORK_DEV_BRANCH="${fork[fork_dev_branch]}"
+    local MAIN_BRANCH="${fork[main_branch]}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -33,10 +33,10 @@ sync_fork() {
     git init > /dev/null 2>&1
 
     echo
-    echo "Fetching upstream/master:"
+    echo "Fetching upstream (${MAIN_BRANCH}):"
     git remote add upstream ${UPSTREAM_REPO}
     git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
-    git checkout -qf remotes/upstream/master
+    git checkout -qf remotes/upstream/${MAIN_BRANCH}
     local LAST_UPSTREAM_RELEASE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
     echo
     echo "Found latest release: ${LAST_UPSTREAM_RELEASE}"
@@ -50,23 +50,23 @@ sync_fork() {
     git init > /dev/null 2>&1
 
     echo
-    echo "Fetching fork/${FORK_DEV_BRANCH}:"
+    echo "Fetching fork (${MAIN_BRANCH}):"
     git remote add fork ${FORK_REPO}
     git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules fork
-    git checkout -qf remotes/fork/${FORK_DEV_BRANCH} -b ${FORK_DEV_BRANCH}
+    git checkout -qf remotes/fork/${MAIN_BRANCH}
     echo
     if git merge-base --is-ancestor ${COMMIT_RELEASE} HEAD > /dev/null 2>&1 ; then
-        echo "Release commit already in fork/${FORK_DEV_BRANCH}. No need to sync anything."
+        echo "Release commit already in fork. No need to sync anything."
     else
-        echo "Release commit wasn't found in fork/${FORK_DEV_BRANCH}."
+        echo "Release commit wasn't found in fork."
         echo
         echo "Sending sync request to fork:"
         echo "POST ${FORK_DISPATCH_URL}"
         curl --fail -X POST \
-            -u "${GITHUB_USER}:${GITHUB_TOKEN}" \
+            -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
             -H "Accept: application/vnd.github.everest-preview+json" \
             -H "Content-Type: application/json" \
-            --data '{"event_type":"sync_upstream"}' \
+            --data '{"event_type":"sync_release"}' \
             ${FORK_DISPATCH_URL}
         echo
         echo "Sync request sent successfully."
