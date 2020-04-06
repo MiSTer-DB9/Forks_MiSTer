@@ -1,0 +1,21 @@
+name: Push release
+
+on:
+  push:
+    branches:
+      - <<FORK_DEV_BRANCH>>
+  pull_request:
+    branches:
+      - <<FORK_DEV_BRANCH>>
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Merge to master + Release
+      run: ./.github/push_release.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
