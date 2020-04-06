@@ -41,10 +41,14 @@ setup_cicd_on_fork() {
     sed -i "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" ${TEMP_DIR}/.github/sync_release.sh
     sed -i "s%<<FORK_REPO>>%${FORK_REPO}%g" ${TEMP_DIR}/.github/sync_release.sh
     sed -i "s%<<FORK_DEV_BRANCH>>%${FORK_DEV_BRANCH}%g" ${TEMP_DIR}/.github/sync_release.sh
+    sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/push_release.sh
+    sed -i "s%<<FORK_DEV_BRANCH>>%${FORK_DEV_BRANCH}%g" ${TEMP_DIR}/.github/push_release.sh
     sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/Dockerfile
     sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/Dockerfile
     sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/Dockerfile
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
+    sed -i "s%<<FORK_DEV_BRANCH>>%${FORK_DEV_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
+    sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
     git add .github
     git add Dockerfile
