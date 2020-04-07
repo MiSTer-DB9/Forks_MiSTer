@@ -1,4 +1,4 @@
-name: Push release
+name: Push Release
 
 on: [push, pull_request]
 
@@ -9,7 +9,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Merge to master + Release
+    - name: Release
       run: ./.github/push_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
