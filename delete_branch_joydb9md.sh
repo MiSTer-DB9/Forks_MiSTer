@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT INT
 
-merge_branch_into_main() {
+delete_branch() {
     declare -n fork="$1"
 
     local FORK_REPO="${fork[fork_repo]}"
@@ -34,11 +34,11 @@ merge_branch_into_main() {
     echo "Fetching origin:"
     git remote add origin ${ORIGIN_URL}
     git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules origin
-    git checkout -qf origin/${MAIN_BRANCH} -b ${MAIN_BRANCH}
+    git checkout -qf origin/Joy_DB9MD -b Joy_DB9MD
     echo
-    git merge --no-commit origin/Joy_DB9MD
-    git commit -m "BOT: Merging Joy_DB9MD branch."
-    git push origin ${MAIN_BRANCH}
+    git checkout -qf master
+    git branch -D Joy_DB9MD
+    git push origin :Joy_DB9MD
 
     popd > /dev/null 2>&1
     rm -rf ${TEMP_DIR}
@@ -62,7 +62,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-echo -n "WARNING! You are trying to merge Joy_DB9MD into master for the following cores: "
+echo -n "WARNING! You are trying to delete the branch Joy_DB9MD for the following cores: "
 for fork in $@
 do
     echo -n "${fork} "
@@ -76,8 +76,8 @@ fi
 echo
 for fork in $@
 do
-    echo "Merging Joy_DB9MD for ${fork}..."
-    merge_branch_into_main $fork
+    echo "Deleting branch Joy_DB9MD for ${fork}..."
+    delete_branch $fork
     echo; echo; echo
 done
 

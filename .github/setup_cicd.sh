@@ -18,7 +18,7 @@ setup_cicd_on_fork() {
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
         exit 1
     fi
-    local FORK_PUSH_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}.git"
+    local FORK_PUSH_URL="https://${DISPATCH_USER}:${DISPATCH_TOKEN}@github.com/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}.git"
     echo
     echo "Fetching fork:"
     local TEMP_DIR="$(mktemp -d)"
