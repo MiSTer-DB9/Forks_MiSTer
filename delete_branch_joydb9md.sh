@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # With Joy_DB9MD branches: Arcade_Arkanoid_DB9 Arcade_AtariTetris_DB9 Arcade_BlackWidow_DB9 Arcade_Berzerk_DB9 Arcade_BombJack_DB9 Arcade_Centipede_DB9 Arcade_Defender_DB9 Arcade_DonkeyKong_DB9 Arcade_Galaga_DB9 Arcade_Galaxian_DB9 Arcade_Gaplus_DB9 Arcade_Gyruss_DB9 Arcade_MCR1_DB9 Arcade_MCR2_DB9 Arcade_MCR3_DB9 Arcade_MCR3Mono_DB9 Arcade_MCR3Scroll_DB9 Arcade_Pacman_DB9 Arcade_Popeye_DB9 Arcade_Robotron_DB9 Arcade_RushnAttack_DB9 Arcade_Scramble_DB9 Arcade_SegaSYS1_DB9 Arcade_SolomonsKey_DB9 Arcade_Sprint1_DB9 Arcade_Sprint2_DB9 Arcade_Druaga_DB9 Arcade_Ultratank_DB9 Archie_DB9 Amstrad_DB9 Atari800_DB9 MSX_DB9 Oric_DB9 ZX_Spectrum_DB9 Atari800_DB9 ColecoVision_DB9 NeoGeo_DB9 Gameboy_DB9 GBA_DB9 NES_DB9 SNES_DB9 SMS_DB9 MegaCD_DB9 TurboGrafx16_DB9 Vectrex_DB9 Menu_DB9
-# With JOY_DB9MD branches: Arcade_NinjaKun_DB9 Arcade_RallyX_DB9
 
 set -euo pipefail
 
@@ -38,7 +37,7 @@ delete_branch() {
     git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules origin
     git checkout -qf origin/Joy_DB9MD -b Joy_DB9MD
     echo
-    git checkout -qf master
+    git checkout -qf ${MAIN_BRANCH}
     git branch -D Joy_DB9MD
     git push origin :Joy_DB9MD
 
