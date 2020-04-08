@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# With Joy_DB9MD branches: Arcade_Arkanoid_DB9 Arcade_AtariTetris_DB9 Arcade_BlackWidow_DB9 Arcade_Berzerk_DB9 Arcade_BombJack_DB9 Arcade_Centipede_DB9 Arcade_Defender_DB9 Arcade_DonkeyKong_DB9 Arcade_Galaga_DB9 Arcade_Galaxian_DB9 Arcade_Gaplus_DB9 Arcade_Gyruss_DB9 Arcade_MCR1_DB9 Arcade_MCR2_DB9 Arcade_MCR3_DB9 Arcade_MCR3Mono_DB9 Arcade_MCR3Scroll_DB9 Arcade_Pacman_DB9 Arcade_Popeye_DB9 Arcade_Robotron_DB9 Arcade_RushnAttack_DB9 Arcade_Scramble_DB9 Arcade_SegaSYS1_DB9 Arcade_SolomonsKey_DB9 Arcade_Sprint1_DB9 Arcade_Sprint2_DB9 Arcade_Druaga_DB9 Arcade_Ultratank_DB9 Archie_DB9 Amstrad_DB9 Atari800_DB9 MSX_DB9 Oric_DB9 ZX_Spectrum_DB9 Atari800_DB9 ColecoVision_DB9 NeoGeo_DB9 Gameboy_DB9 GBA_DB9 NES_DB9 SNES_DB9 SMS_DB9 TurboGrafx16_DB9 Vectrex_DB9 Menu_DB9
 
 set -euo pipefail
 
@@ -15,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT INT
 
-delete_branch() {
+apply_replace_patch_1() {
     declare -n fork="$1"
 
     local FORK_REPO="${fork[fork_repo]}"
@@ -35,11 +34,32 @@ delete_branch() {
     echo "Fetching origin:"
     git remote add origin ${ORIGIN_URL}
     git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules origin
-    git checkout -qf origin/Joy_DB9MD -b Joy_DB9MD
+    git checkout -qf origin/${MAIN_BRANCH} -b ${MAIN_BRANCH}
     echo
-    git checkout -qf ${MAIN_BRANCH}
-    git branch -D Joy_DB9MD
-    git push origin :Joy_DB9MD
+
+    sed -i "s/'h37: io_dout/'h0f: io_dout/g" sys/hps_io.v
+
+    local INSERTED="$(git diff --numstat | awk '{print $1}')"
+    local DELETED="$(git diff --numstat | awk '{print $2}')"
+    local FILE="$(git diff --numstat | awk '{print $3}')"
+
+    if [[ "${INSERTED}" != "1" ]]; then
+        >&2 echo "Inserted lines not 1, instead: ${INSERTED}"
+        exit 1
+    fi
+    if [[ "${DELETED}" != "1" ]]; then
+        >&2 echo "Deleted lines not 1, instead: ${DELETED}"
+        exit 1
+    fi
+    if [[ "${FILE}" != "sys/hps_io.v" ]]; then
+        >&2 echo "File changed not 'sys/hps_io.v', instead: ${FILE}"
+        exit 1
+    fi
+
+    git add sys/hps_io.v
+    git commit -m "BOT: Change Id '37 for Id '0f (patch 1)."
+    echo
+    git push origin ${MAIN_BRANCH}
 
     popd > /dev/null 2>&1
     rm -rf ${TEMP_DIR}
@@ -63,7 +83,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-echo -n "WARNING! You are trying to delete the branch Joy_DB9MD for the following cores: "
+echo -n "WARNING! You are trying to apply the replace patch 1 for the following cores: "
 for fork in $@
 do
     echo -n "${fork} "
@@ -77,8 +97,8 @@ fi
 echo
 for fork in $@
 do
-    echo "Deleting branch Joy_DB9MD for ${fork}..."
-    delete_branch $fork
+    echo "Apply replace patch 1 for ${fork}..."
+    apply_replace_patch_1 $fork
     echo; echo; echo
 done
 
