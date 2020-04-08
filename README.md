@@ -11,6 +11,7 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 1. [`force_fork_release.sh`](force_fork_release.sh): Debugging script that forces a fork release. Not intended for general use.
 2. [`merge_joydb9md_into_main.sh`](merge_joydb9md_into_main.sh): Migration script that merges branch Joy_DB9MD into master.
 3. [`delete_branch_joydb9md.sh`](delete_branch_joydb9md.sh): Migration script that deletes the branch Joy_DB9MD from the repository.
+4. [`apply_replace_patch_1.sh`](apply_replace_patch_1.sh): Migration script that applies a replace patch to the fork.
 
 ## Instructions for Forks
 
