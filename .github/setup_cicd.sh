@@ -49,6 +49,15 @@ setup_cicd_on_fork() {
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
+    # @TODO This is a special case that should be generalized if needed by more forks
+    if [[ "${FORK_REPO}" == "https://github.com/Miguel-T80c/Atari800_MiSTer.git" ]] ; then
+        popd > /dev/null 2>&1
+        cp fork_ci_template/atari800_Dockerfile ${TEMP_DIR}/Dockerfile
+        cp fork_ci_template/atari800_push_release.sh ${TEMP_DIR}/.github/push_release.sh
+        cp fork_ci_template/atari800_sync_release.sh ${TEMP_DIR}/.github/sync_release.sh
+        pushd ${TEMP_DIR} > /dev/null 2>&1
+    fi
+
     git add .github
     git add Dockerfile
     git add .dockerignore
