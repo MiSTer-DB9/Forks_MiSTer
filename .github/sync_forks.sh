@@ -66,7 +66,7 @@ sync_fork() {
             echo
             echo "Sending sync request to fork:"
             echo "POST ${FORK_DISPATCH_URL}"
-            echo curl --fail -X POST \
+            curl --fail -X POST \
                 -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
                 -H "Accept: application/vnd.github.everest-preview+json" \
                 -H "Content-Type: application/json" \
