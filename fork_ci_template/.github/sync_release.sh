@@ -27,6 +27,7 @@ echo "Syncing with upstream:"
 git fetch origin --unshallow 2> /dev/null || true
 git checkout -qf ${MAIN_BRANCH}
 git merge --no-commit ${COMMIT_TO_MERGE} || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" $@
+git submodule update --init --recursive
 
 echo
 echo "Build start:"
