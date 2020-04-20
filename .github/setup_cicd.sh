@@ -49,6 +49,7 @@ setup_cicd_on_fork() {
     sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/Dockerfile
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
+    sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
     # @TODO This is a special case that should be generalized if needed by more forks
     if [[ "${FORK_REPO}" == "https://github.com/Miguel-T80c/Atari800_MiSTer.git" ]] ; then
