@@ -1,6 +1,14 @@
 name: Push Release
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  repository_dispatch:
+    types: [push_release]
 
 jobs:
   build:

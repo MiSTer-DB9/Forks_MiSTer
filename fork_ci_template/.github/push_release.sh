@@ -4,13 +4,18 @@ set -euo pipefail
 
 CORE_NAME="<<RELEASE_CORE_NAME>>"
 MAIN_BRANCH="<<MAIN_BRANCH>>"
+COMPILATION_OUTPUT="<<COMPILATION_OUTPUT>>"
 
 if [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] ; then
     echo "The CI/CD Bot doesn't deliver a new release."
     exit 0
 fi
 
-RELEASE_FILE="${CORE_NAME}_$(date +%Y%m%d).rbf"
+FILE_EXTENSION="${COMPILATION_OUTPUT##*.}"
+RELEASE_FILE="${CORE_NAME}_$(date +%Y%m%d)"
+if [[ "${FILE_EXTENSION}" != "${COMPILATION_OUTPUT}" ]] ; then
+    RELEASE_FILE="${RELEASE_FILE}.${FILE_EXTENSION}"
+fi
 echo "Creating release ${RELEASE_FILE}."
 
 export GIT_MERGE_AUTOEDIT=no
@@ -18,6 +23,7 @@ git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
 git fetch origin --unshallow 2> /dev/null || true
 git checkout -qf ${MAIN_BRANCH}
+git submodule update --init --recursive
 
 echo
 echo "Build start:"
