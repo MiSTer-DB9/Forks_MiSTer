@@ -14,13 +14,13 @@ force_release_fork() {
 
     local FORK_DISPATCH_URL="https://api.github.com/repos/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}/dispatches"
 
-    echo "Forcing sync request to fork:"
+    echo "Forcing '${FORCED_RELEASE_EVENT}' request to fork:"
     echo "POST ${FORK_DISPATCH_URL}"
     curl --fail -X POST \
         -u "${GITHUB_USER}:${GITHUB_TOKEN}" \
         -H "Accept: application/vnd.github.everest-preview+json" \
         -H "Content-Type: application/json" \
-        --data '{"event_type":"sync_release"}' \
+        --data '{"event_type":"'${FORCED_RELEASE_EVENT}'"}' \
         ${FORK_DISPATCH_URL}
 
     echo "Forced request sent successfully."
@@ -52,6 +52,7 @@ echo
 read -p "Are you sure? " -n 1 -r
 if [[ ! ${REPLY} =~ ^[Yy]$ ]]
 then
+    echo
     exit 1
 fi
 echo

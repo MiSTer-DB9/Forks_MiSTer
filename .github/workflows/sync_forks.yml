@@ -3,6 +3,8 @@ name: Sync Forks
 on:
   schedule:
     - cron:  '0 */2 * * *'
+  repository_dispatch:
+    types: [sync_forks]
 
 jobs:
   build:
