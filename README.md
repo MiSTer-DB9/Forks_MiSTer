@@ -21,3 +21,8 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 - If a fork wants to enable email notification to the maintainer in case of merge conflict or compilation error, has to add a [Secret](https://help.github.com/en/actions/configuring-and-managing-workflows/creating-and-storing-encrypted-secrets) named `NOTIFICATION_API_KEY` with the proper auth key to the fork repository.
 
 - The fork needs to appear within [Forks.ini](Forks.ini) with the appropriate values in its declaration. In case it is desired to be synced it also has to be in the `SYNCING_FORKS` list.
+
+### License
+
+Copyright © 2020, [José Manuel Barroso Galindo](https://github.com/theypsilon).
+Released under the [GPL v3 License](LICENSE).
