@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright 2020 José Manuel Barroso Galindo <theypsilon@gmail.com>
+# Copyright (c) 2020 José Manuel Barroso Galindo <theypsilon@gmail.com>
 
 set -euo pipefail
 
