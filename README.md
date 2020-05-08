@@ -10,9 +10,10 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 
 1. [`force_fork_release.sh`](force_fork_release.sh): Debugging script that forces a fork release.
 2. [`force_forks_event.sh`](force_forks_event.sh): Debugging script that forces some event in this repository.
-3. [`merge_joydb9md_into_main.sh`](merge_joydb9md_into_main.sh): Migration script that merges branch Joy_DB9MD into master.
-4. [`delete_branch_joydb9md.sh`](delete_branch_joydb9md.sh): Migration script that deletes the branch Joy_DB9MD from the repository.
-5. [`apply_replace_patch_1.sh`](apply_replace_patch_1.sh): Migration script that applies a replace patch to the fork.
+3. [`merge_joydb9md_into_main.sh`](merge_joydb9md_into_main.sh): Migration script that merges branch Joy_DB9MD into master for the given fork/s.
+4. [`delete_branch_joydb9md.sh`](delete_branch_joydb9md.sh): Migration script that deletes the branch Joy_DB9MD from the given fork/s.
+5. [`apply_replace_patch_1.sh`](apply_replace_patch_1.sh): Migration script that applies a replace patch to the given fork/s.
+6. [`delete_latest_commit.sh`](delete_latest_commit.sh): Migration script that deletes the latest commit from the given fork/s.
 
 ## Instructions for Forks
 
