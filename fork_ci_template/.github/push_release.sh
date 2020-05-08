@@ -7,7 +7,7 @@ CORE_NAME="<<RELEASE_CORE_NAME>>"
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_OUTPUT="<<COMPILATION_OUTPUT>>"
 
-if [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] ; then
+if [[ "${FORCED:-false}" != "true" ]] && [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] ; then
     echo "The CI/CD Bot doesn't deliver a new release."
     exit 0
 fi

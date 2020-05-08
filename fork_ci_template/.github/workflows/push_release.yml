@@ -21,3 +21,4 @@ jobs:
       run: ./.github/push_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        FORCED: ${{ github.event.client_payload.forced }}
