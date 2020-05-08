@@ -44,8 +44,8 @@ delete_latest_commit() {
     echo
     echo "Checking latest commit message:"
     echo "${CHECK_LATEST_MESSAGE}"
-    echo "Previous commit: ${PREVIOUS_COMMIT_ID}"
-    echo "From author: ${PREVIOUS_COMMIT_AUTHOR}"
+    echo "Previous commit id: ${PREVIOUS_COMMIT_ID}"
+    echo "Previous commit author: ${PREVIOUS_COMMIT_AUTHOR}"
     echo
     if [[ "${SURE:-no}" != "yes" ]] ; then
         read -p "Are you sure you want to delete that commit? " -n 1 -r
