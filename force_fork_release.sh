@@ -21,7 +21,7 @@ force_release_fork() {
         -u "${GITHUB_USER}:${GITHUB_TOKEN}" \
         -H "Accept: application/vnd.github.everest-preview+json" \
         -H "Content-Type: application/json" \
-        --data '{"event_type":"'${FORCED_RELEASE_EVENT}'"}' \
+        --data '{"event_type":"'${FORCED_RELEASE_EVENT}'","client_payload":{"forced":"true"}}' \
         ${FORK_DISPATCH_URL}
 
     echo "Forced request sent successfully."
