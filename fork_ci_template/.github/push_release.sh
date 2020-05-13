@@ -29,9 +29,10 @@ git submodule update --init --recursive
 echo
 echo "Build start:"
 docker build -t artifact . || ./.github/notify_error.sh "COMPILATION ERROR" $@
-docker run --rm artifact > releases/${RELEASE_FILE}
 echo
 echo "Pushing release:"
+git pull --ff-only origin ${MAIN_BRANCH} || ./.github/notify_error.sh "PULL ORIGIN CONFLICT" $@
+docker run --rm artifact > releases/${RELEASE_FILE}
 git add releases
 git commit -m "BOT: Releasing ${RELEASE_FILE}" -m "After pushed https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
 git push origin ${MAIN_BRANCH}

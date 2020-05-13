@@ -39,7 +39,7 @@ echo "Syncing with upstream:"
 git fetch origin --unshallow 2> /dev/null || true
 git submodule update --init
 git checkout -qf ${MAIN_BRANCH}
-git merge --no-commit ${COMMIT_TO_MERGE} || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" $@
+git merge -Xignore-all-space --no-commit ${COMMIT_TO_MERGE} || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" $@
 
 echo
 echo "Build Atari 800 start:"
