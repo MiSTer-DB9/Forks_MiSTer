@@ -36,6 +36,9 @@ setup_cicd_on_fork() {
     cp -r fork_ci_template/Dockerfile ${TEMP_DIR}/
     cp -r fork_ci_template/.dockerignore ${TEMP_DIR}/
     cp -r fork_ci_template/.github ${TEMP_DIR}/
+    if [ -f "${TEMP_DIR}/README DB9 Support.md" ] ; then
+        cp "fork_ci_template/README DB9 Support.md" "${TEMP_DIR}/README DB9 Support.md"
+    fi
     pushd ${TEMP_DIR} > /dev/null 2>&1
 
     sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/sync_release.sh
@@ -64,6 +67,7 @@ setup_cicd_on_fork() {
     git add .github
     git add Dockerfile
     git add .dockerignore
+    git add "README DB9 Support.md" > /dev/null 2>&1 || true
 
     if ! git diff --staged --quiet --exit-code ; then
         echo "There are changes to commit."
