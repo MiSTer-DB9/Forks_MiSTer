@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - <<MAIN_BRANCH>>
-  pull_request:
-    branches:
-      - <<MAIN_BRANCH>>
   repository_dispatch:
     types: [push_release]
 
