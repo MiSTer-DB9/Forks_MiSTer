@@ -56,7 +56,7 @@ setup_cicd_on_fork() {
     sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
     # @TODO This is a special case that should be generalized if needed by more forks
-    if [[ "${FORK_REPO}" == "https://github.com/Miguel-T80c/Atari800_MiSTer.git" ]] ; then
+    if [[ "${FORK_REPO}" == "https://github.com/MiSTer-DB9/Atari800_MiSTer.git" ]] ; then
         popd > /dev/null 2>&1
         cp fork_ci_template/atari800_Dockerfile ${TEMP_DIR}/Dockerfile
         cp fork_ci_template/atari800_push_release.sh ${TEMP_DIR}/.github/push_release.sh
