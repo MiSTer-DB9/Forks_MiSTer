@@ -13,7 +13,7 @@ fi
 
 FORK_DISPATCH_URL="https://api.github.com/repos/theypsilon/Forks_MiSTer/dispatches"
 
-echo "Forcing '${FORCED_RELEASE_EVENT}' request to Forks_MiSTer:"
+echo "Forcing '${FORCED_FORKS_EVENT}' request to Forks_MiSTer:"
 echo "POST ${FORK_DISPATCH_URL}"
 curl --fail -X POST \
     -u "${GITHUB_USER}:${GITHUB_TOKEN}" \
