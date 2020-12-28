@@ -2,7 +2,7 @@ name: Sync Forks
 
 on:
   schedule:
-    - cron:  '0 */2 * * *'
+    - cron:  '0 0 * * *'
   repository_dispatch:
     types: [sync_forks]
 
