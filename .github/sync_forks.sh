@@ -45,7 +45,7 @@ sync_fork() {
         local LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
         echo
         echo "Found latest release: ${LAST_UPSTREAM_RELEASE}"
-        local COMMIT_RELEASE="$(git log -n 1 --pretty=format:%H -- releases/${LAST_UPSTREAM_RELEASE})"
+        local COMMIT_RELEASE=$(git log -n 1 --pretty=format:%H -- "releases/${LAST_UPSTREAM_RELEASE}")
         echo "    @ commit: ${COMMIT_RELEASE}"
 
         popd > /dev/null 2>&1
