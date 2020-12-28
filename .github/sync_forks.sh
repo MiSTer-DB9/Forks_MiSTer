@@ -42,7 +42,7 @@ sync_fork() {
         git remote add upstream ${UPSTREAM_REPO}
         git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules upstream
         git checkout -qf remotes/upstream/${MAIN_BRANCH}
-        local LAST_UPSTREAM_RELEASE="$(ls releases/ | grep ${CORE_NAME} | tail -n 1)"
+        local LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
         echo
         echo "Found latest release: ${LAST_UPSTREAM_RELEASE}"
         local COMMIT_RELEASE="$(git log -n 1 --pretty=format:%H -- releases/${LAST_UPSTREAM_RELEASE})"
