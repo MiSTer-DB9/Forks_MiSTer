@@ -17,5 +17,5 @@ jobs:
     - name: Setup CI/CD on Forks
       run: ./.github/setup_cicd.sh
       env:
-        DISPATCH_USER: MiSTer-DB9
+        DISPATCH_USER: github-actions[bot]
         DISPATCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
