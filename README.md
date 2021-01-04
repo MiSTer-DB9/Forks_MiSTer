@@ -25,5 +25,5 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 
 ### License
 
-Copyright © 2020, [José Manuel Barroso Galindo](https://github.com/theypsilon).
+Copyright © 2020-2021, [José Manuel Barroso Galindo](https://github.com/theypsilon) for the [MiSTer-DB9 Team](https://github.com/MiSTer-DB9).
 Released under the [GPL v3 License](LICENSE).
