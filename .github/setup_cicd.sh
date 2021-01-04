@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+echo "DISPATCH_USER: ${DISPATCH_USER:-}"
+
 setup_cicd_on_fork() {
     declare -n fork="$1"
 
