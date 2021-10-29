@@ -3,6 +3,7 @@ name: Sync + Release
 on:
   repository_dispatch:
     types: [sync_release]
+  workflow_dispatch:
 
 jobs:
   build:
