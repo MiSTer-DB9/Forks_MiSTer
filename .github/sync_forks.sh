@@ -103,6 +103,8 @@ do
     echo; echo; echo
 done
 
+git config --global user.email "theypsilon@gmail.com"
+git config --global user.name "The CI/CD Bot"
 git checkout --orphan date
 git reset
 date > date.txt
