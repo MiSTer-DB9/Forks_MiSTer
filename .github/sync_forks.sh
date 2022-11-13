@@ -105,6 +105,7 @@ done
 
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
+git remote -v
 git checkout --orphan date
 git reset
 date > date.txt
