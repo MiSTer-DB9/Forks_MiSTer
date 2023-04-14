@@ -86,7 +86,8 @@ setup_cicd_on_fork() {
 }
 
 source <(cat Forks.ini | python -c "
-import sys, ConfigParser
+import sys
+from configparser import ConfigParser
 
 config = ConfigParser.ConfigParser()
 config.readfp(sys.stdin)
