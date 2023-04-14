@@ -88,7 +88,7 @@ source <(cat Forks.ini | python -c "
 import sys
 from configparser import ConfigParser
 
-config = ConfigParser.ConfigParser()
+config = ConfigParser()
 config.readfp(sys.stdin)
 
 for sec in config.sections():
