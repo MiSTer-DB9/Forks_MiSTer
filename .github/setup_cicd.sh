@@ -90,7 +90,7 @@ import sys
 from configparser import ConfigParser
 
 config = ConfigParser()
-config.readfp(sys.stdin)
+config.read_file(sys.stdin)
 
 for sec in config.sections():
     print(\"declare -A %s\" % (sec))
