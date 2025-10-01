@@ -7,4 +7,4 @@ ENV COMPILATION_OUTPUT=${COMPILATION_OUTPUT}
 WORKDIR /project
 ADD . /project
 RUN /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile ${COMPILATION_INPUT}
-CMD cat /project/${COMPILATION_OUTPUT}
+CMD ["cat", "/project/${COMPILATION_OUTPUT}"]
