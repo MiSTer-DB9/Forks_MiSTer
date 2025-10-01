@@ -108,9 +108,10 @@ do
 done
 
 echo "Syncing END!"
+
+cd "${GITHUB_WORKSPACE}"
 echo
 echo "Pushing date..."
-
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
 git remote -v
