@@ -34,7 +34,7 @@ sync_fork() {
         echo
         echo "Looking for new ${CORE_NAME} releases."
         TEMP_DIR="$(mktemp -d)"
-        pushd ${TEMP_DIR} > /dev/null 2>&1
+        pushd ${TEMP_DIR}
         git init > /dev/null 2>&1
 
         echo
@@ -48,10 +48,10 @@ sync_fork() {
         local COMMIT_RELEASE=$(git log -n 1 --pretty=format:%H -- "releases/${LAST_UPSTREAM_RELEASE}")
         echo "    @ commit: ${COMMIT_RELEASE}"
 
-        popd > /dev/null 2>&1
+        popd
         rm -rf ${TEMP_DIR} || true > /dev/null 2>&1
         TEMP_DIR="$(mktemp -d)"
-        pushd ${TEMP_DIR} > /dev/null 2>&1
+        pushd ${TEMP_DIR}
         git init > /dev/null 2>&1
 
         echo
@@ -78,7 +78,7 @@ sync_fork() {
             break
         fi
 
-        popd > /dev/null 2>&1
+        popd
         rm -rf ${TEMP_DIR} || true > /dev/null 2>&1
         TEMP_DIR=""
     done
@@ -97,12 +97,19 @@ for sec in config.sections():
         print('%s[%s]=\"%s\"' % (sec, key, val))
 ")
 
+
+echo "Syncing START!"
+
 for fork in ${Forks[syncing_forks]}
 do
     echo "Syncing ${fork}..."
     sync_fork $fork
     echo; echo; echo
 done
+
+echo "Syncing END!"
+echo
+echo "Pushing date..."
 
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
