@@ -14,6 +14,7 @@ Scripts and tasks for keeping MiSTer core forks synced with their upstreams.
 4. [`delete_branch_joydb9md.sh`](delete_branch_joydb9md.sh): Migration script that deletes the branch Joy_DB9MD from the given fork/s.
 5. [`apply_replace_patch_1.sh`](apply_replace_patch_1.sh): Migration script that applies a replace patch to the given fork/s.
 6. [`delete_latest_commit.sh`](delete_latest_commit.sh): Migration script that deletes the latest commit from the given fork/s.
+7. [`sort_forks_ini.py`](sort_forks_ini.py): Script that keep Forks.ini sorted.
 
 ## Instructions for Forks
 
