@@ -4,16 +4,14 @@
 set -euo pipefail
 
 setup_cicd_on_fork() {
-    declare -n fork="$1"
-
-    local RELEASE_CORE_NAME="${fork[release_core_name]}"
-    local UPSTREAM_REPO="${fork[upstream_repo]}"
-    local FORK_REPO="${fork[fork_repo]}"
-    local MAIN_BRANCH="${fork[main_branch]}"
-    local QUARTUS_IMAGE="${fork[quartus_image]}"
-    local COMPILATION_INPUT="${fork[compilation_input]}"
-    local COMPILATION_OUTPUT="${fork[compilation_output]}"
-    local MAINTAINER_EMAILS="${fork[maintainer_emails]}"
+    local RELEASE_CORE_NAME="$1"
+    local UPSTREAM_REPO="$2"
+    local FORK_REPO="$3"
+    local MAIN_BRANCH="$4"
+    local QUARTUS_IMAGE="$5"
+    local COMPILATION_INPUT="$6"
+    local COMPILATION_OUTPUT="$7"
+    local MAINTAINER_EMAILS="$8"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -33,7 +31,6 @@ setup_cicd_on_fork() {
     rm -rf ${TEMP_DIR}/.github || true
 
     popd > /dev/null 2>&1
-    cp -r fork_ci_template/Dockerfile ${TEMP_DIR}/
     cp -r fork_ci_template/.dockerignore ${TEMP_DIR}/
     cp -r fork_ci_template/.github ${TEMP_DIR}/
     if [ -f "${TEMP_DIR}/README DB9 Support.md" ] ; then
@@ -43,29 +40,20 @@ setup_cicd_on_fork() {
 
     sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/sync_release.sh
     sed -i "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<FORK_REPO>>%${FORK_REPO}%g" ${TEMP_DIR}/.github/sync_release.sh
     sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/sync_release.sh
+    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/sync_release.sh
+    sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/.github/sync_release.sh
+    sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/.github/sync_release.sh
     sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/push_release.sh
     sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/push_release.sh
+    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/push_release.sh
     sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/.github/push_release.sh
-    sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/Dockerfile
-    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/Dockerfile
-    sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/Dockerfile
+    sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/.github/push_release.sh
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
     sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
     sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
-    # @TODO This is a special case that should be generalized if needed by more forks
-    if [[ "${FORK_REPO}" == "https://github.com/MiSTer-DB9/Atari800_MiSTer.git" ]] ; then
-        popd > /dev/null 2>&1
-        cp fork_ci_template/atari800_Dockerfile ${TEMP_DIR}/Dockerfile
-        cp fork_ci_template/atari800_push_release.sh ${TEMP_DIR}/.github/push_release.sh
-        cp fork_ci_template/atari800_sync_release.sh ${TEMP_DIR}/.github/sync_release.sh
-        pushd ${TEMP_DIR} > /dev/null 2>&1
-    fi
-
     git add .github
-    git add Dockerfile
     git add .dockerignore
     git add "README DB9 Support.md" > /dev/null 2>&1 || true
 
@@ -98,10 +86,53 @@ for sec in config.sections():
         print('%s[%s]=\"%s\"' % (sec, key, val))
 ")
 
-for fork in ${Forks[syncing_forks]}
-do
-    echo "Setting up ${fork} CI/CD..."
-    setup_cicd_on_fork $fork
+# Group forks by fork_repo to handle repos that produce multiple cores
+declare -A REPO_FORKS_MAP
+for fork_name in ${Forks[syncing_forks]}; do
+    declare -n _fork_tmp="$fork_name"
+    _repo="${_fork_tmp[fork_repo]}"
+    if [[ -v "REPO_FORKS_MAP[$_repo]" ]]; then
+        REPO_FORKS_MAP[$_repo]="${REPO_FORKS_MAP[$_repo]} $fork_name"
+    else
+        REPO_FORKS_MAP[$_repo]="$fork_name"
+    fi
+    unset -n _fork_tmp
+done
+
+for _repo_url in "${!REPO_FORKS_MAP[@]}"; do
+    IFS=' ' read -r -a _group <<< "${REPO_FORKS_MAP[$_repo_url]}"
+
+    # Use first fork for shared settings (upstream_repo, main_branch, quartus_image, maintainer_emails)
+    declare -n _primary="${_group[0]}"
+    _UPSTREAM_REPO="${_primary[upstream_repo]}"
+    _FORK_REPO="${_primary[fork_repo]}"
+    _MAIN_BRANCH="${_primary[main_branch]}"
+    _QUARTUS_IMAGE="${_primary[quartus_image]}"
+    _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
+    unset -n _primary
+
+    # Build space-separated compilation params (bash array literals in templates)
+    _RELEASE_CORE_NAMES=""
+    _COMPILATION_INPUTS=""
+    _COMPILATION_OUTPUTS=""
+    for _fn in "${_group[@]}"; do
+        declare -n _fd="$_fn"
+        _RELEASE_CORE_NAMES="${_RELEASE_CORE_NAMES:+${_RELEASE_CORE_NAMES} }${_fd[release_core_name]}"
+        _COMPILATION_INPUTS="${_COMPILATION_INPUTS:+${_COMPILATION_INPUTS} }${_fd[compilation_input]}"
+        _COMPILATION_OUTPUTS="${_COMPILATION_OUTPUTS:+${_COMPILATION_OUTPUTS} }${_fd[compilation_output]}"
+        unset -n _fd
+    done
+
+    echo "Setting up CI/CD for ${_FORK_REPO} (cores: ${_RELEASE_CORE_NAMES})..."
+    setup_cicd_on_fork \
+        "$_RELEASE_CORE_NAMES" \
+        "$_UPSTREAM_REPO" \
+        "$_FORK_REPO" \
+        "$_MAIN_BRANCH" \
+        "$_QUARTUS_IMAGE" \
+        "$_COMPILATION_INPUTS" \
+        "$_COMPILATION_OUTPUTS" \
+        "$_MAINTAINER_EMAILS"
     echo; echo; echo
 done
 
