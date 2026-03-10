@@ -18,15 +18,6 @@ jobs:
         path: /tmp/docker-image.tar
         key: docker-<<QUARTUS_IMAGE>>
 
-    - name: Load or pull Docker image
-      run: |
-        if [ -f /tmp/docker-image.tar ]; then
-          docker load -i /tmp/docker-image.tar
-        else
-          docker pull "<<QUARTUS_IMAGE>>"
-          docker save "<<QUARTUS_IMAGE>>" -o /tmp/docker-image.tar
-        fi
-
     - name: Sync with upstream + Release
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:

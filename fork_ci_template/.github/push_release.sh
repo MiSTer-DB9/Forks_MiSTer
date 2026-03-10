@@ -51,6 +51,16 @@ if [[ ${#BUILD_INPUTS[@]} -eq 0 ]]; then
     exit 0
 fi
 
+if ! docker image inspect "${QUARTUS_IMAGE}" >/dev/null 2>&1; then
+    echo "Loading or pulling Docker image ${QUARTUS_IMAGE}..."
+    if [ -f /tmp/docker-image.tar ]; then
+        docker load -i /tmp/docker-image.tar
+    else
+        docker pull "${QUARTUS_IMAGE}"
+        docker save "${QUARTUS_IMAGE}" -o /tmp/docker-image.tar
+    fi
+fi
+
 for ((i = 0; i < ${#BUILD_INPUTS[@]}; i++)); do
     echo "Creating release ${BUILD_RELEASE_NAMES[i]}."
 
