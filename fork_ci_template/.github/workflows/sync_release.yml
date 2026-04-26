@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v6
 
     - name: Cache Docker image
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: /tmp/docker-image.tar
         key: docker-<<QUARTUS_IMAGE>>
