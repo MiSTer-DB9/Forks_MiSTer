@@ -89,6 +89,11 @@ echo "END rerere-train.sh"
 echo
 
 git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
+
+# [MiSTer-DB9 BEGIN] - status bit collision tripwire (fork-only)
+./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"
+# [MiSTer-DB9 END]
+
 git submodule update --init --recursive
 
 if [[ "${NEED_REBUILD}" == "true" ]] ; then
