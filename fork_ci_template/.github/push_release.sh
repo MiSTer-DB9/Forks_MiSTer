@@ -51,6 +51,11 @@ if [[ ${#BUILD_INPUTS[@]} -eq 0 ]]; then
     exit 0
 fi
 
+# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret before build
+# (writes sys/db9_key_secret.vh for FPGA cores, db9_key_secret.h for Main_MiSTer)
+./.github/materialize_secret.sh
+# [MiSTer-DB9-Pro END]
+
 if ! docker image inspect "${QUARTUS_IMAGE}" >/dev/null 2>&1; then
     echo "Loading or pulling Docker image ${QUARTUS_IMAGE}..."
     if [ -f /tmp/docker-image.tar ]; then

@@ -96,6 +96,11 @@ git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notif
 
 git submodule update --init --recursive
 
+# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret before build
+# (writes sys/db9_key_secret.vh for FPGA cores, db9_key_secret.h for Main_MiSTer)
+./.github/materialize_secret.sh
+# [MiSTer-DB9-Pro END]
+
 if [[ "${NEED_REBUILD}" == "true" ]] ; then
     if ! docker image inspect "${QUARTUS_IMAGE}" >/dev/null 2>&1; then
         echo "Loading or pulling Docker image ${QUARTUS_IMAGE}..."
