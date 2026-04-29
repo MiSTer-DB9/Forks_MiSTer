@@ -6,23 +6,22 @@
 // gated features remain inert.
 
 module db9_key_gate #(
-	// 256 bits but only the low 128 feed SipHash. The upper 128 are reserved
-	// for future v2 nonce mode (HMAC seed derivation) and stay synth-time
-	// constant; Quartus prunes the unused bits at no silicon cost.
-	parameter [255:0] MASTER_ROOT = 256'h0  // synth-time +define from CI
+	// Upper 128 bits reserved for v2 nonce mode (HMAC seed derivation);
+	// Quartus prunes them at no silicon cost.
+	parameter [255:0] MASTER_ROOT = 256'h0
 ) (
 	input              clk,
-
-	// hps_io.sv tap: register snapshot of cmd + byte_cnt + io_din.
-	input              cmd_db9,        // = (cmd == 16'hFE)
-	input        [5:0] byte_cnt,       // current byte_cnt (16-bit word index)
+	input              cmd_db9,
+	input        [5:0] byte_cnt,
 	input       [15:0] io_din,
-
-	output             saturn_unlocked
+	output reg         saturn_unlocked = 1'b0
 );
 
-	reg  [31:0] feature_mask = 0;
-	assign saturn_unlocked = feature_mask[0];
+	localparam [5:0] PAYLOAD_FIRST    = 6'd1;
+	localparam [5:0] PAYLOAD_LAST     = 6'd16;
+	localparam [5:0] TAG_FIRST        = 6'd17;
+	localparam [5:0] TAG_LAST         = 6'd20;
+	localparam       FEATURE_MASK_LSB = 192;
 
 	reg [255:0] payload   = 0;
 	reg  [63:0] tag_in    = 0;
@@ -31,11 +30,11 @@ module db9_key_gate #(
 	always @(posedge clk) begin
 		start_sip <= 1'b0;
 		if (cmd_db9) begin
-			if (byte_cnt >= 6'd1 && byte_cnt <= 6'd16)
-				payload[(byte_cnt - 6'd1) * 16 +: 16] <= io_din;
-			else if (byte_cnt >= 6'd17 && byte_cnt <= 6'd20)
-				tag_in[(byte_cnt - 6'd17) * 16 +: 16] <= io_din;
-			if (byte_cnt == 6'd20) start_sip <= 1'b1;
+			if (byte_cnt >= PAYLOAD_FIRST && byte_cnt <= PAYLOAD_LAST)
+				payload <= {io_din, payload[255:16]};
+			else if (byte_cnt >= TAG_FIRST && byte_cnt <= TAG_LAST)
+				tag_in <= {io_din, tag_in[63:16]};
+			if (byte_cnt == TAG_LAST) start_sip <= 1'b1;
 		end
 	end
 
@@ -54,10 +53,7 @@ module db9_key_gate #(
 	wire eq = ~|(tag_expected ^ tag_in);
 
 	always @(posedge clk) begin
-		if (sip_done) begin
-			// payload bytes 24..27 (little-endian) carry feature_mask.
-			feature_mask <= eq ? payload[223:192] : 32'h0;
-		end
+		if (sip_done) saturn_unlocked <= eq & payload[FEATURE_MASK_LSB];
 	end
 
 endmodule
