@@ -41,3 +41,8 @@ jobs:
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         FORCED: ${{ github.event.client_payload.forced }}
+        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
+        # push_release.sh materialises sys/db9_key_secret.vh from this env var
+        # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # [MiSTer-DB9-Pro END]
