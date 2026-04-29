@@ -253,14 +253,14 @@ def fix_joy_2p_for_1p(text: str) -> tuple[str, bool]:
 
 DB9MD_INST_RE = re.compile(
     r'(?:^[ \t]*//----[^\n]*\n^[ \t]*//----[^\n]*\n)?'
-    r'^reg \[15:0\] JOYDB9MD_1,JOYDB9MD_2;[^\n]*\n'
-    r'^joy_db9md\s+joy_db9md\s*\(.*?\n\)\s*;[^\n]*\n',
+    r'^[ \t]*reg \[15:0\] JOYDB9MD_1,JOYDB9MD_2;[^\n]*\n'
+    r'^[ \t]*joy_db9md\s+joy_db9md\s*\(.*?\n[ \t]*\)\s*;[^\n]*\n',
     flags=re.MULTILINE | re.DOTALL,
 )
 DB15_INST_RE = re.compile(
     r'(?:^[ \t]*//----[^\n]*\n^[ \t]*//----[^\n]*\n)?'
-    r'^reg \[15:0\] JOYDB15_1,JOYDB15_2;[^\n]*\n'
-    r'^joy_db15\s+joy_db15\s*\(.*?\n\)\s*;[^\n]*\n',
+    r'^[ \t]*reg \[15:0\] JOYDB15_1,JOYDB15_2;[^\n]*\n'
+    r'^[ \t]*joy_db15\s+joy_db15\s*\(.*?\n[ \t]*\)\s*;[^\n]*\n',
     flags=re.MULTILINE | re.DOTALL,
 )
 
@@ -419,15 +419,41 @@ def widen_status(text: str) -> tuple[str, bool]:
 
 # ---- Step 6: wrap joystick mux with OSD_STATUS guard ----
 
-# Match `wire [31:0] varN = joydb_Nena ? <body> : <fallback>;`
-# Body and fallback may span multiple lines. Use DOTALL for the body.
-JOYDB_MUX_LINE_RE = re.compile(
-    r'^([ \t]*)wire[ \t]+\[31:0\][ \t]+(\w+)[ \t]*=[ \t]*joydb_([12])ena[ \t]*\?[ \t]*'
-    r'(.*?)'  # body — non-greedy, may span lines
-    r'[ \t]*:[ \t]*'
-    r'([^;\n]+(?:\n[^;\n]+)*?);[^\n]*$',  # fallback expression up to final `;`
-    flags=re.MULTILINE | re.DOTALL,
+# Match the head of `wire [31:0] varN = joydb_Nena ? ` so we can resume parsing
+# the body with a brace/paren-balancer (a plain regex stops at the first `:`,
+# which is wrong — the body usually contains `[hi:lo]` slices like `joydb_1[4:0]`).
+JOYDB_MUX_HEAD_RE = re.compile(
+    r'^([ \t]*)wire[ \t]+\[31:0\][ \t]+(\w+)[ \t]*=[ \t]*joydb_([12])ena[ \t]*\?[ \t]*',
+    flags=re.MULTILINE,
 )
+
+
+def _scan_balanced_body(text: str, start: int) -> int | None:
+    """Return the index just past the body that begins at `text[start]`. The
+    body must start with `{`; we walk forward tracking `{}`, `()`, `[]` depth
+    and return when the outermost `{` closes. None if unbalanced."""
+    if start >= len(text) or text[start] != '{':
+        return None
+    depth_brace = depth_paren = depth_bracket = 0
+    i = start
+    while i < len(text):
+        c = text[i]
+        if c == '{':
+            depth_brace += 1
+        elif c == '}':
+            depth_brace -= 1
+            if depth_brace == 0:
+                return i + 1
+        elif c == '(':
+            depth_paren += 1
+        elif c == ')':
+            depth_paren -= 1
+        elif c == '[':
+            depth_bracket += 1
+        elif c == ']':
+            depth_bracket -= 1
+        i += 1
+    return None
 
 
 def wrap_joystick_mux(text: str) -> tuple[str, int]:
@@ -436,24 +462,42 @@ def wrap_joystick_mux(text: str) -> tuple[str, int]:
     n = 0
     out = []
     pos = 0
-    for m in JOYDB_MUX_LINE_RE.finditer(text):
-        indent, var, _ena_idx, body, fallback = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+    for m in JOYDB_MUX_HEAD_RE.finditer(text):
+        indent, var, _ena_idx = m.group(1), m.group(2), m.group(3)
+        body_start = m.end()
+        body_end = _scan_balanced_body(text, body_start)
+        if body_end is None:
+            continue
+        body = text[body_start:body_end]
         # Skip if already guarded
         if 'OSD_STATUS' in body:
             continue
-        # Build replacement
-        body_clean = body.strip()
-        # Only wrap if body starts with `{` (typical mux mapping form)
-        if not body_clean.startswith('{'):
+        # Find ` : <fallback>;` after the body (first colon at top level here
+        # is the ternary separator — body is fully balanced).
+        rest = text[body_end:]
+        sep_match = re.match(r'[ \t]*:[ \t]*', rest)
+        if not sep_match:
             continue
+        fallback_start = body_end + sep_match.end()
+        # Read fallback until `;` at line/statement end (no nested braces here).
+        semi = text.find(';', fallback_start)
+        eol = text.find('\n', fallback_start)
+        if semi == -1 or (eol != -1 and eol < semi):
+            continue
+        fallback = text[fallback_start:semi]
+        # Skip the trailing `;` and any inline comment to the EOL.
+        line_end = text.find('\n', semi)
+        if line_end == -1:
+            line_end = len(text)
+        body_clean = body.strip()
         new_line = (
             f'{indent}// [MiSTer-DB9-Pro BEGIN] - DB controllers muted while OSD is open\n'
-            f'{indent}wire [31:0] {var} = joydb_{_ena_idx}ena ? (OSD_STATUS ? 32\'b0 : {body_clean}) : {fallback.strip()};\n'
+            f"{indent}wire [31:0] {var} = joydb_{_ena_idx}ena ? (OSD_STATUS ? 32'b0 : {body_clean}) : {fallback.strip()};\n"
             f'{indent}// [MiSTer-DB9-Pro END]'
         )
         out.append(text[pos:m.start()])
         out.append(new_line)
-        pos = m.end()
+        pos = line_end
         n += 1
     out.append(text[pos:])
     return ''.join(out), n
