@@ -18,89 +18,103 @@ reg [5:0] joy1_in, joy2_in;
 reg joyMDsel, joySEL = 1'b0;
 reg joySplit = 1'b1;
 
-reg [7:0] delay;
+reg [7:0] delay = 8'd0;
 
-always @(negedge clk) begin
-    delay <= delay + 1;
+always @(posedge clk) begin
+    delay <= delay + 1'd1;
 end
 
-always @(posedge delay[5]) begin
-    joySplit <= ~joySplit;
-end
+// Single-cycle ticks replace the legacy `posedge|negedge delay[N]` derived
+// clocks. `delay` cycles 0..255 on every clk; the tick conditions fire at the
+// same counter values where the original bit-edges occurred:
+//   delay[5] 0->1 (was `posedge delay[5]`)  : delay[5:0] == 32
+//   delay[5] 1->0 (was `negedge delay[5]`)  : delay[5:0] == 0
+//   delay[7] 1->0 (was `negedge delay[7]`)  : delay      == 0
+// Bodies execute one clk cycle after the original derived edge — negligible
+// vs the /64 (~1.28 us) and /256 (~5.12 us) protocol intervals at 50 MHz.
+wire d5_rise = (delay[5:0] == 6'd32);
+wire d5_fall = (delay[5:0] == 6'd0);
+wire d7_fall = (delay      == 8'd0);
 
-always @(negedge delay[5]) begin
-    if (joySplit) begin
-        joy2_in <= joy_in;
+always @(posedge clk) begin
+    if (d5_rise) begin
+        joySplit <= ~joySplit;
     end
-    else begin
-        joy1_in <= joy_in;
+
+    if (d5_fall) begin
+        if (joySplit) begin
+            joy2_in <= joy_in;
+        end
+        else begin
+            joy1_in <= joy_in;
+        end
     end
-end
 
-// Joystick Management
-always @(negedge delay[7]) begin
-    state <= state + 1;
-    case (state)        //-- joy_s format MXYZ SACB UDLR
-        8'd0: begin
-            joyMDsel <= 1'b0;
-        end
+    // Joystick Management
+    if (d7_fall) begin
+        state <= state + 1;
+        case (state)        //-- joy_s format MXYZ SACB UDLR
+            8'd0: begin
+                joyMDsel <= 1'b0;
+            end
 
-        8'd1: begin
-            joyMDsel <= 1'b1;
-        end
+            8'd1: begin
+                joyMDsel <= 1'b1;
+            end
 
-        8'd2: begin
-            joyMDdat1[5:0] <= joy1_in[5:0]; //-- CBUDLR
-            joyMDdat2[5:0] <= joy2_in[5:0]; //-- CBUDLR
-            joyMDsel <= 1'b0;
-            joy1_6btn <= 1'b0; // -- Assume it's not a six-button controller
-            joy2_6btn <= 1'b0; // -- Assume it's not a six-button controller
-        end
+            8'd2: begin
+                joyMDdat1[5:0] <= joy1_in[5:0]; //-- CBUDLR
+                joyMDdat2[5:0] <= joy2_in[5:0]; //-- CBUDLR
+                joyMDsel <= 1'b0;
+                joy1_6btn <= 1'b0; // -- Assume it's not a six-button controller
+                joy2_6btn <= 1'b0; // -- Assume it's not a six-button controller
+            end
 
-        8'd3: begin // Si derecha e Izda es 0 es un mando de megadrive
-            if (joy1_in[1:0] == 2'b00) begin
-                joyMDdat1[7:6] <= joy1_in[5:4]; // -- Start, A
+            8'd3: begin // Si derecha e Izda es 0 es un mando de megadrive
+                if (joy1_in[1:0] == 2'b00) begin
+                    joyMDdat1[7:6] <= joy1_in[5:4]; // -- Start, A
+                end
+                else begin
+                    joyMDdat1[7:4] <= { 1'b1, 1'b1, joy1_in[5:4] }; // -- Read A/B as Master System
+                end
+                if (joy2_in[1:0] == 2'b00) begin
+                    joyMDdat2[7:6] <= joy2_in[5:4]; //-- Start, A
+                end
+                else begin
+                    joyMDdat2[7:4] <= { 1'b1, 1'b1, joy2_in[5:4] }; // -- Read A/B as Master System
+                end
+                joyMDsel <= 1'b1;
             end
-            else begin
-                joyMDdat1[7:4] <= { 1'b1, 1'b1, joy1_in[5:4] }; // -- Read A/B as Master System
-            end
-            if (joy2_in[1:0] == 2'b00) begin
-                joyMDdat2[7:6] <= joy2_in[5:4]; //-- Start, A
-            end
-            else begin
-                joyMDdat2[7:4] <= { 1'b1, 1'b1, joy2_in[5:4] }; // -- Read A/B as Master System
-            end
-            joyMDsel <= 1'b1;
-        end
 
-        8'd4: begin
-            joyMDsel <= 1'b0;
-        end
+            8'd4: begin
+                joyMDsel <= 1'b0;
+            end
 
-        8'd5: begin
-            if (joy1_in[3:0] == 4'b000) begin
-                joy1_6btn <= 1'b1; // -- It's a six button
+            8'd5: begin
+                if (joy1_in[3:0] == 4'b000) begin
+                    joy1_6btn <= 1'b1; // -- It's a six button
+                end
+                if (joy2_in[3:0] == 4'b000) begin
+                    joy2_6btn <= 1'b1; // -- It's a six button
+                end
+                joyMDsel <= 1'b1;
             end
-            if (joy2_in[3:0] == 4'b000) begin
-                joy2_6btn <= 1'b1; // -- It's a six button
-            end
-            joyMDsel <= 1'b1;
-        end
 
-        8'd6: begin
-            if (joy1_6btn == 1'b1) begin
-                joyMDdat1[11:8] <= joy1_in[4:0]; // -- Mode, X, Y e Z
+            8'd6: begin
+                if (joy1_6btn == 1'b1) begin
+                    joyMDdat1[11:8] <= joy1_in[4:0]; // -- Mode, X, Y e Z
+                end
+                if (joy2_6btn == 1'b1) begin
+                    joyMDdat2[11:8] <= joy2_in[4:0]; // -- Mode, X, Y e Z
+                end
+                joyMDsel <= 1'b0;
             end
-            if (joy2_6btn == 1'b1) begin
-                joyMDdat2[11:8] <= joy2_in[4:0]; // -- Mode, X, Y e Z
-            end
-            joyMDsel <= 1'b0;
-        end
 
-        default: begin
-            joyMDsel <= 1'b1;
-        end
-    endcase
+            default: begin
+                joyMDsel <= 1'b1;
+            end
+        endcase
+    end
 end
 
 //joyMDdat1 and joyMDdat2

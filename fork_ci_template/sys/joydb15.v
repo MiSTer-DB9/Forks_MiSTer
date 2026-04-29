@@ -20,23 +20,17 @@ reg [15:0] joy1 = 16'hFFFF, joy2  = 16'hFFFF;
 reg joy_renew = 1'b1;
 reg [4:0] joy_count = 5'd0;
 
-assign JOY_CLK = JCLOCKS[3]; // 3Mhz
+assign JOY_CLK = JCLOCKS[3]; // 3Mhz, drives the splitter's external clock pin
 assign JOY_LOAD = joy_renew;
-always @(posedge JOY_CLK) begin
-    if (joy_count == 5'd0) begin
-        joy_renew = 1'b0;
-    end
-    else begin
-        joy_renew = 1'b1;
-    end
-    if (joy_count == 5'd25) begin
-        joy_count = 5'd0;
-    end
-    else begin
-        joy_count = joy_count + 1'd1;
-    end
-end
-always @(posedge JOY_CLK) begin
+
+// Tick fires once per /16 period — the cycle JCLOCKS[3] first becomes 1, i.e.
+// the same instant `posedge JOY_CLK` was triggering before. Bodies execute one
+// clk cycle later (~20 ns at 50 MHz, vs the 333 ns DB15 bit period).
+wire joy_tick = (JCLOCKS[3:0] == 4'b1000);
+
+always @(posedge clk) if (joy_tick) begin
+    joy_renew <= (joy_count != 5'd0);
+    joy_count <= (joy_count == 5'd25) ? 5'd0 : (joy_count + 5'd1);
     case (joy_count)
         5'd2  : joy1[7]  <= JOY_DATA;  // P1 D
         5'd3  : joy1[6]  <= JOY_DATA;  // P1 C

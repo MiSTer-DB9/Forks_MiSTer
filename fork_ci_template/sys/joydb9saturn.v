@@ -58,7 +58,13 @@ module joy_db9saturn (
 // between a line change and the sample, which matches the Saturn core's
 // SMPC PORT_DELAY of 41-42 ticks at 4MHz (~10.25-10.50us).
 reg [7:0] delay = 8'd0;
-always @(negedge clk) delay <= delay + 1'd1;
+always @(posedge clk) delay <= delay + 1'd1;
+
+// Single-cycle tick equivalent to the legacy `negedge delay[7]` derived
+// clock — fires the cycle delay[7] would have transitioned 1->0, i.e. when
+// the counter wraps to 0. Body executes one clk cycle after the original
+// derived edge (~20 ns at 50 MHz, vs the ~5.12 us phase step).
+wire d7_fall = (delay == 8'd0);
 
 localparam [3:0]  PAD_ID_DIGITAL = 4'hB;  // standard 6-button Saturn pad
 localparam [3:0]  PAD_ID_ANALOG  = 4'h5;  // 3D Control Pad in analog switch position
@@ -111,7 +117,7 @@ wire       pad_ok      = (md_id == PAD_ID_DIGITAL) | (md_id == PAD_ID_ANALOG);
 // with the new 0 about to be shifted in, this requires 4 consecutive misses.
 wire       pad_dropped = ~pad_ok & ~|joySatSr[cur_port][2:0] & joySatValid[cur_port];
 
-always @(negedge delay[7]) begin
+always @(posedge clk) if (d7_fall) begin
   case (phase)
     SEL: begin
       joySplit   <= cur_port;
