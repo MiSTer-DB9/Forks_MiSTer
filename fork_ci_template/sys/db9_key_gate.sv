@@ -14,7 +14,8 @@ module db9_key_gate #(
 	input              cmd_db9,
 	input        [5:0] byte_cnt,
 	input       [15:0] io_din,
-	output reg         saturn_unlocked = 1'b0
+	output      [31:0] feature_mask,
+	output             saturn_unlocked
 );
 
 	localparam [5:0] PAYLOAD_FIRST    = 6'd1;
@@ -27,13 +28,17 @@ module db9_key_gate #(
 	reg  [63:0] tag_in    = 0;
 	reg         start_sip = 0;
 
+	// Indexed-slice writes (not shift register): hps_io.sv holds cmd_db9 high
+	// for the entire 40-byte transaction (cmd is a latched register, not a
+	// strobe). Same-slot rewrites are idempotent; a shift register would
+	// scramble payload/tag_in on every held cycle.
 	always @(posedge clk) begin
 		start_sip <= 1'b0;
 		if (cmd_db9) begin
 			if (byte_cnt >= PAYLOAD_FIRST && byte_cnt <= PAYLOAD_LAST)
-				payload <= {io_din, payload[255:16]};
+				payload[(byte_cnt - PAYLOAD_FIRST) * 16 +: 16] <= io_din;
 			else if (byte_cnt >= TAG_FIRST && byte_cnt <= TAG_LAST)
-				tag_in <= {io_din, tag_in[63:16]};
+				tag_in[(byte_cnt - TAG_FIRST) * 16 +: 16] <= io_din;
 			if (byte_cnt == TAG_LAST) start_sip <= 1'b1;
 		end
 	end
@@ -52,9 +57,13 @@ module db9_key_gate #(
 
 	wire eq = ~|(tag_expected ^ tag_in);
 
+	reg [31:0] feature_mask_r = 0;
 	always @(posedge clk) begin
-		if (sip_done) saturn_unlocked <= eq & payload[FEATURE_MASK_LSB];
+		if (sip_done)
+			feature_mask_r <= eq ? payload[FEATURE_MASK_LSB +: 32] : 32'b0;
 	end
+	assign feature_mask    = feature_mask_r;
+	assign saturn_unlocked = feature_mask_r[0];
 
 endmodule
 // [MiSTer-DB9-Pro END]
