@@ -214,6 +214,41 @@ def strip_joydb_mux_gba(text: str) -> tuple[str, bool]:
     return new_text, n > 0
 
 
+# GBA-style cores reference `joydbena` and `joydb[N]` (legacy 1P bare names) in
+# joy_unmod. After strip_joydb_mux_gba removes the decls, the references are
+# orphans — `joydbena` is undeclared and `joydb` collides with the wrapper
+# module/instance name. Rename the references to the wrapper's _1 form. Bare
+# `joydb` (no bracket) is left alone — that's the wrapper instance.
+def rename_legacy_joydb_refs(text: str) -> tuple[str, int]:
+    n = 0
+    new_text, k = re.subn(r'\bjoydbena\b', 'joydb_1ena', text)
+    if k:
+        text = new_text
+        n += k
+    new_text, k = re.subn(r'\bjoydb\[', 'joydb_1[', text)
+    if k:
+        text = new_text
+        n += k
+    return text, n
+
+
+# 1P cores never read `joydb_2`, so `joy_2p` is unused as a 2P-mux enable.
+# Some upstream cores repurpose `status[125]` for their own toggle (e.g. GBA's
+# Buttons Mapping option); aliasing `joy_2p = status[125]` then accidentally
+# couples joy_2p to that toggle. Force `joy_2p = 1'b0` for 1P cores.
+def fix_joy_2p_for_1p(text: str) -> tuple[str, bool]:
+    pat = re.compile(
+        r"^([ \t]*)wire[ \t]+joy_2p[ \t]*=[ \t]*status\[125\];[^\n]*$",
+        flags=re.MULTILINE,
+    )
+    if not pat.search(text):
+        return text, False
+    return pat.sub(
+        r"\1wire         joy_2p          = 1'b0;          // 1P-only: joy_2p unused",
+        text, count=1,
+    ), True
+
+
 # ---- Step 3: strip joy_db9md / joy_db15 instances + reg decls ----
 
 DB9MD_INST_RE = re.compile(
@@ -588,6 +623,18 @@ def port_core(core_dir: Path) -> list[str]:
     # Check `orig` (pre-port) since the live wrapper hookup adds a non-indexed
     # `joydb_2` port binding that we want to ignore.
     is_1p = 'joydb_2[' not in orig
+
+    # GBA-style legacy ref rename — runs after strip_joydb_mux_gba (no-op on
+    # cores that didn't match) and before WRAPPER_BLOCK so we don't rewrite
+    # the wrapper's own `joydb_1ena` decls.
+    text, n_ref = rename_legacy_joydb_refs(text)
+    if n_ref:
+        notes.append(f'{sv.name}: renamed {n_ref} legacy joydb/joydbena ref(s) to joydb_1/joydb_1ena')
+
+    if is_1p:
+        text, ok = fix_joy_2p_for_1p(text)
+        if ok:
+            notes.append(f"{sv.name}: tied joy_2p to 1'b0 (1P-only core; status[125] may be reused)")
 
     text, ok = update_conf_str(text, is_1p=is_1p)
     if ok:
