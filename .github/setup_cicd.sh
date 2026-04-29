@@ -36,6 +36,22 @@ setup_cicd_on_fork() {
     if [ -f "${TEMP_DIR}/README DB9 Support.md" ] ; then
         cp "fork_ci_template/README DB9 Support.md" "${TEMP_DIR}/README DB9 Support.md"
     fi
+
+    # Sync sys/ helpers into already-ported forks. Tripwire: only forks whose
+    # sys/hps_io.sv carries the Pro key-gate output (`saturn_unlocked`) are
+    # considered ported. Pristine upstream forks and Main_MiSTer (no sys/hps_io.sv)
+    # skip — apply_db9_framework.sh is the only path that performs the initial port.
+    SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
+    SYNC_SYS=0
+    if grep -q saturn_unlocked "${TEMP_DIR}/sys/hps_io.sv" 2>/dev/null; then
+        SYNC_SYS=1
+        for f in "${SYS_HELPERS[@]}"; do
+            cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/sys/${f}"
+        done
+    else
+        echo "  Skipping sys/ helper sync: ${FORK_REPO} not Pro-form (saturn_unlocked absent in sys/hps_io.sv)."
+    fi
+
     pushd ${TEMP_DIR} > /dev/null 2>&1
 
     sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/sync_release.sh
@@ -55,16 +71,36 @@ setup_cicd_on_fork() {
     sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
     sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
 
+    git config --global user.email "theypsilon@gmail.com"
+    git config --global user.name "The CI/CD Bot"
+
+    DID_COMMIT=0
+
     git add .github
     git add .dockerignore
     git add "README DB9 Support.md" > /dev/null 2>&1 || true
 
     if ! git diff --staged --quiet --exit-code ; then
-        echo "There are changes to commit."
-        echo
-        git config --global user.email "theypsilon@gmail.com"
-        git config --global user.name "The CI/CD Bot"
+        echo "Committing .github / .dockerignore / README changes."
+        # Subject "BOT: Fork CI/CD setup changes." is matched by push_release.sh
+        # to skip a build for already-released cores when only setup files moved.
         git commit -m "BOT: Fork CI/CD setup changes." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+        DID_COMMIT=1
+    fi
+
+    # Sys helper drift commit (separate subject so push_release.sh rebuilds).
+    if [[ ${SYNC_SYS} -eq 1 ]]; then
+        for f in "${SYS_HELPERS[@]}"; do
+            git add "sys/${f}"
+        done
+        if ! git diff --staged --quiet --exit-code ; then
+            echo "Committing sys/ helper drift."
+            git commit -m "BOT: Sync sys/ helpers from fork_ci_template." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+            DID_COMMIT=1
+        fi
+    fi
+
+    if [[ ${DID_COMMIT} -eq 1 ]]; then
         git push ${FORK_PUSH_URL} fork_master:${MAIN_BRANCH}
         echo
         echo "New fork ci/cd ready to be used."
