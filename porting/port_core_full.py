@@ -54,6 +54,12 @@ WRAPPER_BLOCK = """// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
 wire   [1:0] joy_type        = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
 wire         joy_2p          = status[125];
+wire         joy_db9md_en    = (joy_type == 2'd2);
+wire         joy_db15_en     = (joy_type == 2'd3);
+wire         joy_any_en      = |joy_type;
+// Legacy 3-bit alias for fork-specific MT32 / SNAC fallback code. Non-canonical
+// RHS variants (ext_iec_en, mt32_disable) need a hand-port — alias is raw.
+wire   [2:0] JOY_FLAG        = {joy_db9md_en, joy_db15_en, joy_2p};
 // [MiSTer-DB9 END]
 
 // [MiSTer-DB9-Pro BEGIN] - Saturn key gate
@@ -89,31 +95,58 @@ assign USER_OUT = USER_OUT_DRIVE;
 
 
 # ---- Step 1: replace JOY_FLAG block with wrapper instance ----
+#
+# Structural matcher (not regex over the whole block): the legacy DB9 baseline
+# always opens with `wire CLK_JOY = CLK_50M*` and closes with
+# `assign USER_OSD = (joydb_1|JOY_DB1|joydb)[10] & ...[6]`. Everything in
+# between (JOY_FLAG with custom RHS, `ifdef SECOND_MT32` brackets, commented
+# variants, USER_MODE/USER_OUT in any order with multi-line ternaries) is
+# implementation noise that the new wrapper hides. We collapse [start..end]
+# into WRAPPER_BLOCK in one shot — robust to all the historical RHS variants
+# (ext_iec_en gate, mt32_use gate, db9md_ena custom expression, 2-bit GBA form,
+# USER_MODE/USER_OSD/USER_OUT reorderings).
+#
+# Optional outer `[MiSTer-DB9 BEGIN/END]` markers are absorbed into the span
+# so the replacement leaves no orphan markers behind.
 
-JOY_FLAG_BLOCK_RE = re.compile(
-    r'(?:^[ \t]*//[^\n]*\[MiSTer-DB9 BEGIN\][^\n]*\n)?'  # optional outer DB9 BEGIN marker (DK-family)
-    r'^[ \t]*wire[ \t]+CLK_JOY[ \t]*=[ \t]*CLK_50M;[^\n]*\n'
-    r'^[ \t]*wire[ \t]+\[2:0\][ \t]+JOY_FLAG[ \t]*=[ \t]*\{status\[\d+\],status\[\d+\],status\[\d+\]\};[^\n]*\n'
-    r'^[ \t]*wire[ \t]+JOY_CLK[^\n]*\n'
-    r'^[ \t]*wire[ \t]+\[5:0\][ \t]+JOY_MDIN[^\n]*\n'
-    r'^[ \t]*wire[ \t]+JOY_DATA[^\n]*\n'
-    r'(?:'
-    r'^[ \t]*assign[ \t]+USER_OUT[ \t]*=[ \t]*JOY_FLAG\[2\][^\n]*\n'
-    r'(?:^[ \t]*:[^\n]*\n){0,3}'                              # USER_OUT may span 1-4 lines (multi-line ternary)
-    r'|^[ \t]*//assign[ \t]+USER_OUT[ \t]*=[ \t]*JOY_FLAG\[2\][^\n]*\n'  # OR commented-out (Genesis-family)
-    r')?'
-    r'(?:^[ \t]*assign[ \t]+USER_MODE[ \t]*=[ \t]*JOY_FLAG\[2:1\][^\n]*\n)?'  # USER_MODE may already be stripped by upgrade_pro_additive
-    r'^[ \t]*assign[ \t]+USER_OSD[ \t]*=[ \t]*joydb_1\[10\][^\n]*\n'
-    r'(?:^[ \t]*//[^\n]*\[MiSTer-DB9 END\][^\n]*\n)?',  # optional outer DB9 END marker
+CLK_JOY_START_RE = re.compile(
+    r'^[ \t]*wire[ \t]+CLK_JOY[ \t]*=[ \t]*CLK_50M[^\n]*\n',
+    flags=re.MULTILINE,
+)
+
+USER_OSD_END_RE = re.compile(
+    r'^[ \t]*assign[ \t]+USER_OSD[ \t]*=[ \t]*'
+    r'(?:joydb_1|JOY_DB1|joydb)\[10\][^\n]*\n',
     flags=re.MULTILINE,
 )
 
 
 def replace_joy_flag_block(text: str) -> tuple[str, bool]:
-    m = JOY_FLAG_BLOCK_RE.search(text)
-    if not m:
+    m_start = CLK_JOY_START_RE.search(text)
+    if not m_start:
         return text, False
-    return text[:m.start()] + WRAPPER_BLOCK + text[m.end():], True
+    m_end = USER_OSD_END_RE.search(text, m_start.end())
+    if not m_end:
+        return text, False
+
+    start = m_start.start()
+    end   = m_end.end()
+
+    # Absorb a `// [MiSTer-DB9 BEGIN] ...` marker line immediately preceding
+    # CLK_JOY so it doesn't survive as an orphan.
+    pre = text[:start]
+    pre_lines = pre.split('\n')
+    if pre_lines and re.match(r'[ \t]*//[^\n]*\[MiSTer-DB9 BEGIN\]', pre_lines[-2] if len(pre_lines) >= 2 else ''):
+        # last element is empty (trailing \n); -2 is the marker line
+        start -= len(pre_lines[-2]) + 1
+
+    # Absorb a `// [MiSTer-DB9 END] ...` marker line immediately following USER_OSD.
+    rest = text[end:]
+    end_marker = re.match(r'[ \t]*//[^\n]*\[MiSTer-DB9 END\][^\n]*\n', rest)
+    if end_marker:
+        end += end_marker.end()
+
+    return text[:start] + WRAPPER_BLOCK + text[end:], True
 
 
 # ---- Step 1b: replace legacy joydbmix wrapper instance ----
@@ -150,11 +183,13 @@ def replace_joydbmix_block(text: str) -> tuple[str, bool]:
 
 JOYDB_MUX_RE = re.compile(
     r'(?:^[ \t]*//[^\n]*\[MiSTer-DB9 BEGIN\][^\n]*\n)?'
-    r'^wire \[15:0\] joydb_1 = JOY_FLAG\[2\] \? JOYDB9MD_1 : JOY_FLAG\[1\] \? JOYDB15_1 : \'0;[^\n]*\n'
-    # joydb_2 mux line absent on 1P-only cores (FlappyBird, Arduboy).
-    r'(?:^wire \[15:0\] joydb_2 = JOY_FLAG\[2\] \? JOYDB9MD_2 : JOY_FLAG\[1\] \? JOYDB15_2 : \'0;[^\n]*\n)?'
-    r'^wire +joydb_1ena = \|JOY_FLAG\[2:1\][^\n]*\n'
-    r'(?:^wire +joydb_2ena = \|JOY_FLAG\[2:1\] & JOY_FLAG\[0\];[^\n]*\n)?'
+    # Leading whitespace tolerated (Saturn `\t`, CDi `    `, Dorodon `\t\t`).
+    r'^[ \t]*wire[ \t]+\[15:0\][ \t]+joydb_1[ \t]*=[ \t]*JOY_FLAG\[2\][ \t]*\?[ \t]*JOYDB9MD_1[ \t]*:[ \t]*JOY_FLAG\[1\][ \t]*\?[ \t]*JOYDB15_1[ \t]*:[ \t]*\'0;[^\n]*\n'
+    # joydb_2 mux line is optional (1P cores: FlappyBird, Arduboy) AND may be
+    # commented out (Apple-II). Match either: blank-line absent / live wire / `//`-prefixed.
+    r'(?:^[ \t]*(?://[ \t]*)?wire[ \t]+\[15:0\][ \t]+joydb_2[ \t]*=[ \t]*JOY_FLAG\[2\][ \t]*\?[ \t]*JOYDB9MD_2[ \t]*:[ \t]*JOY_FLAG\[1\][ \t]*\?[ \t]*JOYDB15_2[ \t]*:[ \t]*\'0;[^\n]*\n)?'
+    r'^[ \t]*wire[ \t]+joydb_1ena[ \t]*=[ \t]*\|JOY_FLAG\[2:1\][^\n]*\n'
+    r'(?:^[ \t]*(?://[ \t]*)?wire[ \t]+joydb_2ena[ \t]*=[ \t]*\|JOY_FLAG\[2:1\][ \t]*&[ \t]*JOY_FLAG\[0\];[^\n]*\n)?'
     r'(?:^[ \t]*//[^\n]*\[MiSTer-DB9 END\][^\n]*\n)?',
     flags=re.MULTILINE,
 )
@@ -162,6 +197,20 @@ JOYDB_MUX_RE = re.compile(
 
 def strip_joydb_mux(text: str) -> tuple[str, bool]:
     new_text, n = JOYDB_MUX_RE.subn('', text, count=1)
+    return new_text, n > 0
+
+
+# GBA uses a 2-bit JOY_FLAG (no 2P bit) and a single-player `joydb` wire (no
+# `_1` suffix). Strip that variant separately.
+JOYDB_MUX_GBA_RE = re.compile(
+    r'^[ \t]*wire[ \t]+\[15:0\][ \t]+joydb[ \t]*=[ \t]*JOY_FLAG\[1\][ \t]*\?[ \t]*JOYDB9MD_1[ \t]*:[ \t]*JOY_FLAG\[0\][ \t]*\?[ \t]*JOYDB15_1[ \t]*:[ \t]*\'0;[^\n]*\n'
+    r'^[ \t]*wire[ \t]+joydbena[ \t]*=[ \t]*\|JOY_FLAG\[1:0\][^\n]*\n',
+    flags=re.MULTILINE,
+)
+
+
+def strip_joydb_mux_gba(text: str) -> tuple[str, bool]:
+    new_text, n = JOYDB_MUX_GBA_RE.subn('', text, count=1)
     return new_text, n > 0
 
 
@@ -179,6 +228,28 @@ DB15_INST_RE = re.compile(
     r'^joy_db15\s+joy_db15\s*\(.*?\n\)\s*;[^\n]*\n',
     flags=re.MULTILINE | re.DOTALL,
 )
+
+
+# Standalone `assign USER_OUT = JOY_FLAG[2] ? {...,JOY_SPLIT,...,JOY_MDSEL} :
+# JOY_FLAG[1] ? {...,JOY_CLK,JOY_LOAD} : '1;` that some cores (Atari-system1,
+# IremM92, DonkeyKong3, DonkeyKongJunior, Dorodon, Apple-II, SuperBreakout, CDi)
+# emit *after* the USER_OSD line, often with a leading `// Active controller
+# type:...` comment and a multi-line ternary. The new wrapper provides this
+# mux as `USER_OUT_DRIVE`; the wrapper also emits `assign USER_OUT =
+# USER_OUT_DRIVE;`, so the standalone block is redundant and would multi-drive.
+
+STANDALONE_USER_OUT_RE = re.compile(
+    r'(?:^[ \t]*//[^\n]*JOY_FLAG\[[12]\][^\n]*\n)?'                   # optional preceding comment
+    r'^[ \t]*assign[ \t]+USER_OUT[ \t]*=[ \t]*JOY_FLAG\[2\][ \t]*\?[ \t]*'
+    r'\{[^{}]*JOY_SPLIT[^{}]*JOY_MDSEL[^{}]*\}[^\n]*\n'              # first line
+    r'(?:^[ \t]*:[^\n]*\n){0,3}',                                     # 0-3 continuation lines (multi-line ternary)
+    flags=re.MULTILINE,
+)
+
+
+def strip_standalone_user_out(text: str) -> tuple[str, bool]:
+    new_text, n = STANDALONE_USER_OUT_RE.subn('', text, count=1)
+    return new_text, n > 0
 
 
 def strip_legacy_instances(text: str) -> tuple[str, list[str]]:
@@ -359,6 +430,58 @@ def update_user_pp_assign(text: str) -> tuple[str, bool]:
     return pat.sub('assign USER_PP = USER_PP_DRIVE;', text, count=1), True
 
 
+# ---- Step 9: SerJoystick-family mid-file USER_OUT mux ----
+#
+# Genesis / MegaCD / PSX / S32X / SMS / Saturn drive USER_OUT inside an
+# always-block (SerJoystick / piano relay). Their `else begin` branch carries
+# `USER_OUT <= JOY_FLAG[2] ? {...,JOY_SPLIT,...,JOY_MDSEL} : JOY_FLAG[1] ?
+# {...,JOY_CLK,JOY_LOAD} : '1;` — a deep-mid-file JOY_FLAG reference that
+# WRAPPER_BLOCK doesn't reach. The new wrapper exposes the same per-mode mux
+# output as `USER_OUT_DRIVE`, so the rewrite collapses to one wire.
+#
+# Two consequences when this pattern is present:
+#   1. The SerJoystick `else` branch is rewritten to `USER_OUT <= USER_OUT_DRIVE;`.
+#   2. The WRAPPER_BLOCK's `assign USER_OUT = USER_OUT_DRIVE;` would create a
+#      multi-driver conflict against the always-block driver, so the orchestrator
+#      strips it after the fact.
+
+SERJOY_USER_OUT_RE = re.compile(
+    r"^([ \t]*)USER_OUT[ \t]*(?P<op><=|=)[ \t]*JOY_FLAG\[2\][ \t]*\?[ \t]*"
+    r"\{[^{}]*JOY_SPLIT[^{}]*JOY_MDSEL[^{}]*\}[ \t]*:[ \t]*"
+    r"JOY_FLAG\[1\][ \t]*\?[ \t]*"
+    r"\{[^{}]*JOY_CLK[^{}]*JOY_LOAD[^{}]*\}[ \t]*:[ \t]*"
+    r"(?:'1|7'b1111111|8'hFF)[ \t]*;[^\n]*\n",
+    flags=re.MULTILINE,
+)
+
+
+def rewrite_serjoy_user_out(text: str) -> tuple[str, bool]:
+    m = SERJOY_USER_OUT_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group(1)
+    op = m.group('op')  # `<=` (non-blocking) or `=` (blocking) — preserve.
+    new_block = (
+        f'{indent}// [MiSTer-DB9 BEGIN] - SerJoystick relay falls through to joydb USER_OUT_DRIVE\n'
+        f'{indent}USER_OUT {op} USER_OUT_DRIVE;\n'
+        f'{indent}// [MiSTer-DB9 END]\n'
+    )
+    return text[:m.start()] + new_block + text[m.end():], True
+
+
+def strip_wrapper_user_out_assign(text: str) -> tuple[str, bool]:
+    """SerJoystick cores drive USER_OUT from an always-block; the wrapper's
+    `assign USER_OUT = USER_OUT_DRIVE;` would multi-drive. Strip it (and its
+    surrounding markers) when the always-block driver is present."""
+    pat = re.compile(
+        r"^[ \t]*assign[ \t]+USER_OUT[ \t]*=[ \t]*USER_OUT_DRIVE;[^\n]*\n",
+        flags=re.MULTILINE,
+    )
+    if not pat.search(text):
+        return text, False
+    return pat.sub('', text, count=1), True
+
+
 # ---- Orchestrator ----
 
 def port_core(core_dir: Path) -> list[str]:
@@ -395,11 +518,20 @@ def port_core(core_dir: Path) -> list[str]:
         text, ok = strip_joydb_mux(text)
         if ok: notes.append(f'{sv.name}: stripped legacy joydb_1/2 mux')
 
+        text, ok = strip_joydb_mux_gba(text)
+        if ok: notes.append(f'{sv.name}: stripped legacy GBA-style 2-bit joydb mux')
+
         text, ok = replace_joy_flag_block(text)
         if not ok:
             notes.append(f'{sv.name}: JOY_FLAG block did not match standard pattern — aborting')
             return notes
         notes.append(f'{sv.name}: replaced JOY_FLAG block with joydb wrapper instance')
+
+        # Some cores (Atari-system1, IremM92, DonkeyKong3, ...) emit a standalone
+        # `assign USER_OUT = JOY_FLAG[2] ? {...} : '1;` after the JOY_FLAG block.
+        # The wrapper's `USER_OUT_DRIVE` provides the same mux; strip the legacy.
+        text, ok = strip_standalone_user_out(text)
+        if ok: notes.append(f'{sv.name}: stripped standalone post-block USER_OUT mux')
 
     # Idempotent fix-ups: each is a no-op if already in target form, so safe to
     # re-run on any core, including ones whose port_core_full was interrupted
@@ -430,14 +562,33 @@ def port_core(core_dir: Path) -> list[str]:
     text, ok = update_user_pp_assign(text)
     if ok: notes.append(f'{sv.name}: replaced default USER_PP with wrapper-driven assign')
 
+    # SerJoystick family (Genesis/MegaCD/PSX/S32X/SMS/Saturn): rewrite the
+    # mid-file always-block USER_OUT mux + drop the wrapper's `assign USER_OUT`
+    # to avoid a multi-driver conflict.
+    text, ok = rewrite_serjoy_user_out(text)
+    if ok:
+        notes.append(f'{sv.name}: rewrote SerJoystick USER_OUT mux to USER_OUT_DRIVE')
+        text, _ = strip_wrapper_user_out_assign(text)
+        notes.append(f'{sv.name}: stripped wrapper `assign USER_OUT = USER_OUT_DRIVE;` (always-block drives USER_OUT)')
+
     if text == orig:
         notes.append(f'{sv.name}: no changes')
     else:
         write_text(sv, text, nl)
 
-    # Sanity checks
-    if 'JOY_FLAG' in text:
-        notes.append(f'{sv.name}: WARNING — JOY_FLAG still present after port')
+    # Sanity checks. WRAPPER_BLOCK now declares a `wire [2:0] JOY_FLAG = ...`
+    # legacy alias; strip that one line before the leftover-JOY_FLAG check, so
+    # the WARNING fires only for actual residual references (mid-file SNAC
+    # branches, MT32 hazard gate, etc.) that the porter could not rewrite.
+    text_for_check = re.sub(
+        r'^[ \t]*wire[ \t]+\[2:0\][ \t]+JOY_FLAG[ \t]*=[ \t]*\{joy_db9md_en, joy_db15_en, joy_2p\};[^\n]*\n',
+        '', text, count=1, flags=re.MULTILINE,
+    )
+    if 'JOY_FLAG' in text_for_check:
+        residual_lines = [(i+1, ln) for i, ln in enumerate(text_for_check.splitlines()) if 'JOY_FLAG' in ln]
+        notes.append(f'{sv.name}: WARNING — JOY_FLAG still referenced at {len(residual_lines)} site(s) after port (mid-file fork-specific code; may need hand-port if it touches JOY_SPLIT/JOY_MDSEL/JOY_CLK/JOY_LOAD)')
+        for ln, line in residual_lines[:3]:
+            notes.append(f'{sv.name}:   line {ln}: {line.strip()[:100]}')
     if 'joydb joydb' not in text:
         notes.append(f'{sv.name}: WARNING — joydb wrapper instance missing after port')
 
