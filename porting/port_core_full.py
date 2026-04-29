@@ -267,14 +267,18 @@ def strip_legacy_instances(text: str) -> tuple[str, list[str]]:
 
 # ---- Step 4: update CONF_STR to Saturn-first ----
 
-def update_conf_str(text: str) -> tuple[str, bool]:
+def update_conf_str(text: str, is_1p: bool = False) -> tuple[str, bool]:
     """Replace any of OUV/OT, oUV/oT, or O[127:126]/O[125] DB9 entries with
     the Saturn-first form (`Off,Saturn,DB9MD,DB15`).
 
     Handles the optional MiSTer CONF_STR page-prefix (e.g. `P2`, `P1F`, `P3S`):
     cores with multi-page menus carry these as a `P<n>...` segment immediately
     before the option letter range. The new Saturn-first emission preserves the
-    same prefix on the rewritten line so the entry stays on the original menu page."""
+    same prefix on the rewritten line so the entry stays on the original menu page.
+
+    When `is_1p` is True (cores with no `joydb_2 = ...` in the original mux —
+    FlappyBird, Arduboy, GBA, ...), skips emitting the `UserIO Players` line:
+    the toggle is meaningless because joydb_2 is never consumed."""
     # Allow an optional page prefix like P0..P9, P0F, P0S, P0M, etc.
     # (MiSTer convention: P<n> + optional flags). Captured to preserve.
     pfx = r'(?P<pfx>P[0-9][A-Za-z]?)?'
@@ -292,6 +296,8 @@ def update_conf_str(text: str) -> tuple[str, bool]:
             + f'"{prefix}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;"'
             + text[m.end():]
         )
+        if is_1p:
+            text = strip_players_line(text)
         return text, True
 
     # (b) Legacy letter-encoded form (any OXY/oXY for joystick, any OX/oX for
@@ -318,17 +324,47 @@ def update_conf_str(text: str) -> tuple[str, bool]:
         return text, False
     m2 = ply_re.search(text, m.end())
     if not m2:
+        # 1P-only legacy core may not even emit a Players line — replace just
+        # the joystick line in place.
+        if is_1p:
+            prefix_joy = m.group('pfxJ') or ''
+            indent_match = re.match(r'[ \t]*', text[text.rfind('\n', 0, m.start())+1 : m.start()])
+            indent = indent_match.group(0) if indent_match else ''
+            new_block = (
+                f'// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)\n'
+                f'{indent}"{prefix_joy}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;"\n'
+                f'{indent}// [MiSTer-DB9-Pro END]'
+            )
+            return text[:m.start()] + new_block + text[m.end():], True
         return text, False
     prefix_joy = m.group('pfxJ') or ''
     prefix_ply = m2.group('pfxP') or ''
     indent     = m2.group('indent')
-    new_block = (
-        f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)\n'
-        f'{indent}"{prefix_joy}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",\n'
-        f'{indent}"{prefix_ply}O[125],UserIO Players, 1 Player,2 Players;",\n'
-        f'{indent}// [MiSTer-DB9-Pro END]\n'
-    )
+    if is_1p:
+        # Drop the Players line: meaningless when joydb_2 is never consumed.
+        new_block = (
+            f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)\n'
+            f'{indent}"{prefix_joy}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",\n'
+            f'{indent}// [MiSTer-DB9-Pro END]\n'
+        )
+    else:
+        new_block = (
+            f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)\n'
+            f'{indent}"{prefix_joy}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",\n'
+            f'{indent}"{prefix_ply}O[125],UserIO Players, 1 Player,2 Players;",\n'
+            f'{indent}// [MiSTer-DB9-Pro END]\n'
+        )
     return text[:m.start()] + new_block + text[m2.end() + 1:], True
+
+
+# Strip the `O[125],UserIO Players,...` line for 1P cores already at the
+# Saturn-first form. Idempotent: no-op if already stripped.
+def strip_players_line(text: str) -> str:
+    pat = re.compile(
+        r'^[ \t]*"(?:P[0-9][A-Za-z]?)?O\[125\],UserIO Players,[^"]+",?[^\n]*\n',
+        flags=re.MULTILINE,
+    )
+    return pat.sub('', text, count=1)
 
 
 # ---- Step 5: widen status to [127:0] ----
@@ -547,8 +583,24 @@ def port_core(core_dir: Path) -> list[str]:
         text = new_text
         notes.append(f'{sv.name}: stripped {n_um} stale .USER_MODE() binding from joydb instance')
 
-    text, ok = update_conf_str(text)
-    if ok: notes.append(f'{sv.name}: updated CONF_STR to Saturn-first O[127:126]/O[125]')
+    # 1P-only cores never reference `joydb_2[N]` in the joystick mux; for
+    # those, the `UserIO Players` toggle is meaningless and gets dropped.
+    # Check `orig` (pre-port) since the live wrapper hookup adds a non-indexed
+    # `joydb_2` port binding that we want to ignore.
+    is_1p = 'joydb_2[' not in orig
+
+    text, ok = update_conf_str(text, is_1p=is_1p)
+    if ok:
+        suffix = ' (1P: dropped Players)' if is_1p else ''
+        notes.append(f'{sv.name}: updated CONF_STR to Saturn-first O[127:126]{suffix}')
+
+    # Idempotent strip: handles 1P cores already at Saturn form (e.g. FlappyBird
+    # ported before this fix) where the Players line was emitted by mistake.
+    if is_1p:
+        new_text = strip_players_line(text)
+        if new_text != text:
+            text = new_text
+            notes.append(f'{sv.name}: stripped vestigial UserIO Players line (1P-only core)')
 
     text, ok = widen_status(text)
     if ok: notes.append(f'{sv.name}: widened status to [127:0]')
