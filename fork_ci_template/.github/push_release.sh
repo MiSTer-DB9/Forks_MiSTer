@@ -39,12 +39,22 @@ for ((i = 0; i < ${#COMPILATION_INPUT[@]}; i++)); do
         RELEASE_FILE="${RELEASE_FILE}.${FILE_EXTENSION}"
     fi
 
+    # Skip rebuild iff the BOT setup commit only touches .github/ scaffolding.
+    # The old predicate ("releases/${CORE} already exists") let latent build
+    # breakage hide indefinitely: a bad upstream merge could ship the old
+    # stale .rbf forever as long as no human pushed and Sync+Release was
+    # silently failing. Diff-based skip surfaces breakage on the next BOT
+    # tick that touches an actual source file.
     if [[ "${FORCED:-false}" != "true" ]] && \
        [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] && \
-       [[ "$(git log -n 1 --pretty=format:%s)" == "BOT: Fork CI/CD setup changes." ]] && \
-       ls releases/${CORE_NAME[i]}_* >/dev/null 2>&1; then
-        echo "A release for ${CORE_NAME[i]} already exists and this is a setup change. Skipping build."
-        continue
+       [[ "$(git log -n 1 --pretty=format:%s)" == "BOT: Fork CI/CD setup changes." ]]; then
+        non_ci_changes=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep -Ev '^\.github/|^$' || true)
+        if [[ -z "${non_ci_changes}" ]]; then
+            echo "BOT setup change is .github/ only. Skipping build for ${CORE_NAME[i]}."
+            continue
+        fi
+        echo "BOT setup change touches synthesis files; rebuilding ${CORE_NAME[i]}:"
+        echo "${non_ci_changes}" | sed 's/^/  /'
     fi
 
     BUILD_INPUTS+=("${COMPILATION_INPUT[i]}")
