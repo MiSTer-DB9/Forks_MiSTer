@@ -45,15 +45,28 @@ for ((i = 0; i < ${#COMPILATION_INPUT[@]}; i++)); do
     # stale .rbf forever as long as no human pushed and Sync+Release was
     # silently failing. Diff-based skip surfaces breakage on the next BOT
     # tick that touches an actual source file.
+    #
+    # Diff range: last "BOT: Releasing" commit .. HEAD (NOT HEAD^..HEAD).
+    # The HEAD^ form races with concurrency cancel-in-progress: a human
+    # source push whose build is killed by a subsequent BOT setup push
+    # would leave HEAD^=source_commit, HEAD=bot_commit, diff=.github/ only
+    # → skip → source change never built. Walking back to the last release
+    # ensures every unbuilt source change since then forces a rebuild.
     if [[ "${FORCED:-false}" != "true" ]] && \
        [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] && \
        [[ "$(git log -n 1 --pretty=format:%s)" == "BOT: Fork CI/CD setup changes." ]]; then
-        non_ci_changes=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep -Ev '^\.github/|^$' || true)
+        last_release=$(git log --pretty=format:%H --author="The CI/CD Bot" --grep='^BOT: Releasing ' -n 1 || true)
+        if [[ -n "${last_release}" ]]; then
+            diff_range="${last_release}..HEAD"
+        else
+            diff_range="HEAD^..HEAD"
+        fi
+        non_ci_changes=$(git diff --name-only "${diff_range}" 2>/dev/null | grep -Ev '^\.github/|^releases/|^$' || true)
         if [[ -z "${non_ci_changes}" ]]; then
-            echo "BOT setup change is .github/ only. Skipping build for ${CORE_NAME[i]}."
+            echo "BOT setup change is .github/ only since ${last_release:-HEAD^}. Skipping build for ${CORE_NAME[i]}."
             continue
         fi
-        echo "BOT setup change touches synthesis files; rebuilding ${CORE_NAME[i]}:"
+        echo "Unbuilt source changes since ${last_release:-HEAD^}; rebuilding ${CORE_NAME[i]}:"
         echo "${non_ci_changes}" | sed 's/^/  /'
     fi
 
