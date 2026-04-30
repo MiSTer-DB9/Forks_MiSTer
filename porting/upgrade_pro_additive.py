@@ -259,7 +259,26 @@ def upgrade_sys_top(path: Path) -> list[str]:
             text = text[:m_osd.end()] + insert + text[m_osd.end():]
             notes.append(f'{path}: added .USER_PP hookup after .USER_OSD')
         else:
-            notes.append(f'{path}: neither .USER_MODE nor .USER_OSD hookup found — .USER_PP skipped')
+            # Pre-USER_OSD-era sys_top.v (e.g. CosmicAvenger): no .USER_OSD
+            # hookup either. Insert both `.USER_OSD(user_osd),` and
+            # `.USER_PP(user_pp),` immediately before `.USER_OUT(user_out),`
+            # in the emu instance. user_osd / user_pp wires are already
+            # declared (or just added) in the file.
+            m_out = re.search(
+                r'^([ \t]*)\.USER_OUT\(user_out\),[^\n]*\n',
+                text,
+                flags=re.MULTILINE,
+            )
+            if m_out:
+                indent = m_out.group(1)
+                insert = (
+                    f'{indent}.USER_OSD(user_osd),\n'
+                    f'{indent}.USER_PP(user_pp),\n'
+                )
+                text = text[:m_out.start()] + insert + text[m_out.start():]
+                notes.append(f'{path}: added .USER_OSD + .USER_PP hookups before .USER_OUT')
+            else:
+                notes.append(f'{path}: neither .USER_MODE/.USER_OSD/.USER_OUT hookup found — .USER_PP skipped')
 
     if text != orig:
         write_text(path, text, nl)
@@ -644,6 +663,19 @@ def upgrade_core_emu(core_dir: Path) -> list[str]:
     return notes
 
 
+def resolve_hps_io(sys_dir: Path) -> Path:
+    """Pre-SV-rename forks ship `sys/hps_io.v`; post-rename ones ship
+    `sys/hps_io.sv`. The upgrader's regex transforms (saturn_unlocked port,
+    db9_key_gate instantiation, marker wraps) are extension-agnostic — they
+    operate on text. Return whichever exists; prefer .sv when both are
+    present (shouldn't happen, but defines a tiebreaker)."""
+    sv = sys_dir / 'hps_io.sv'
+    v = sys_dir / 'hps_io.v'
+    if sv.exists():
+        return sv
+    return v
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
@@ -652,13 +684,14 @@ def main(argv: list[str]) -> int:
     if not d.is_dir():
         print(f'{d}: not a directory', file=sys.stderr)
         return 1
+    hps_io = resolve_hps_io(d / 'sys')
     # Pass 1: Pro extensions (saturn_unlocked, user_pp).
-    for note in upgrade_hps_io(d / 'sys' / 'hps_io.sv'):
+    for note in upgrade_hps_io(hps_io):
         print(f'  {note}')
     for note in upgrade_sys_top(d / 'sys' / 'sys_top.v'):
         print(f'  {note}')
     # Pass 2: wrap legacy DB9 additions with [MiSTer-DB9 BEGIN/END] markers.
-    for note in wrap_hps_io_markers(d / 'sys' / 'hps_io.sv'):
+    for note in wrap_hps_io_markers(hps_io):
         print(f'  {note}')
     for note in wrap_sys_top_markers(d / 'sys' / 'sys_top.v'):
         print(f'  {note}')

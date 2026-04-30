@@ -26,20 +26,35 @@ apply_db9_framework() {
 
     cp -r fork_ci_template/sys "${dir}/"
 
+    # Pre-SV-rename forks ship `sys/hps_io.v` (Verilog), post-rename ones ship
+    # `sys/hps_io.sv`. The fork's hps_io additions use SV constructs (the
+    # `uio_block.cmd` hierarchical name in the `db9_key_gate` instance),
+    # so when only `.v` exists we keep the filename — Critical Rule #1
+    # forbids renaming upstream files — and instead flip its sys.qip entry
+    # from VERILOG_FILE to SYSTEMVERILOG_FILE further down so Quartus
+    # compiles it in SV mode.
+    local hps_io hps_io_rel
+    if [ -f "${dir}/sys/hps_io.sv" ]; then
+        hps_io_rel='sys/hps_io.sv'
+    else
+        hps_io_rel='sys/hps_io.v'
+    fi
+    hps_io="${dir}/${hps_io_rel}"
+
     # Snapshot EOL of the three patch targets so we can restore after
     # `git apply` (which always lands LF lines, mixing them with CRLF
     # targets). The additive-upgrader path preserves EOL internally.
     local nls
     nls=$(python3 "${eol_io}" snapshot \
-        "${dir}/sys/hps_io.sv" "${dir}/sys/sys_top.v" "${dir}/sys/sys.tcl")
+        "${hps_io}" "${dir}/sys/sys_top.v" "${dir}/sys/sys.tcl")
     read -r nl_hps nl_top nl_tcl <<<"${nls}"
 
-    if grep -q saturn_unlocked "${dir}/sys/hps_io.sv" 2>/dev/null; then
+    if grep -q saturn_unlocked "${hps_io}" 2>/dev/null; then
         echo "  ${dir}: already at Pro form — skipping sys.patch"
     elif git -C "${dir}" apply --check --ignore-whitespace < "${patch}" 2>/dev/null; then
         echo "  ${dir}: pristine upstream sys/ — applying sys.patch"
         git -C "${dir}" apply --ignore-whitespace < "${patch}"
-        python3 "${eol_io}" apply "${nl_hps}" "${dir}/sys/hps_io.sv"
+        python3 "${eol_io}" apply "${nl_hps}" "${hps_io}"
         python3 "${eol_io}" apply "${nl_top}" "${dir}/sys/sys_top.v"
         python3 "${eol_io}" apply "${nl_tcl}" "${dir}/sys/sys.tcl"
     else
@@ -58,9 +73,18 @@ apply_db9_framework() {
     grep -Fwq siphash24.v      sys/sys.qip || echo 'set_global_assignment -name VERILOG_FILE        [file join $::quartus(qip_path) siphash24.v ]'      >> sys/sys.qip
     grep -Fwq db9_key_gate.sv  sys/sys.qip || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) db9_key_gate.sv ]'  >> sys/sys.qip
 
+    # On `hps_io.v` cores, flip the sys.qip entry from VERILOG_FILE to
+    # SYSTEMVERILOG_FILE so Quartus accepts the SV hierarchical name
+    # `uio_block.cmd` that the additive upgrader inserts in the
+    # db9_key_gate instantiation. Idempotent: matches only the
+    # VERILOG_FILE form.
+    if [ -f sys/hps_io.v ]; then
+        sed -i -E 's|^(set_global_assignment -name )VERILOG_FILE([[:space:]]+\[file join \$::quartus\(qip_path\) hps_io\.v[[:space:]]*\])|\1SYSTEMVERILOG_FILE\2|' sys/sys.qip
+    fi
+
     git add sys/joydb9md.v sys/joydb15.v sys/joydb9saturn.v sys/joydb.sv \
             sys/siphash24.v sys/db9_key_gate.sv sys/db9_key_secret.vh \
-            sys/sys.qip sys/hps_io.sv sys/sys_top.v sys/sys.tcl
+            sys/sys.qip "${hps_io_rel}" sys/sys_top.v sys/sys.tcl
 
     # Stage any top-level <core>.sv the upgrader/porter touched.
     git add -u -- '*.sv'
