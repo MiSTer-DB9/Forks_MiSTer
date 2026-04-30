@@ -143,7 +143,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
 
     # Use first fork for shared settings (upstream_repo, main_branch, quartus_image, maintainer_emails)
     declare -n _primary="${_group[0]}"
-    _UPSTREAM_REPO="${_primary[upstream_repo]}"
+    _UPSTREAM_REPO="${_primary[upstream_repo]:-}"
     _FORK_REPO="${_primary[fork_repo]}"
     _MAIN_BRANCH="${_primary[main_branch]}"
     _QUARTUS_IMAGE="${_primary[quartus_image]}"

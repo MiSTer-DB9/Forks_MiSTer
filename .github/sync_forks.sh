@@ -19,9 +19,14 @@ sync_fork() {
     declare -n fork="$1"
 
     local CORE_LIST="${fork[release_core_name]}"
-    local UPSTREAM_REPO="${fork[upstream_repo]}"
+    local UPSTREAM_REPO="${fork[upstream_repo]:-}"
     local FORK_REPO="${fork[fork_repo]}"
     local MAIN_BRANCH="${fork[main_branch]}"
+
+    if [[ -z "${UPSTREAM_REPO}" ]]; then
+        echo "Skipping ${1} — fork-only core (no UPSTREAM_REPO)."
+        return
+    fi
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
