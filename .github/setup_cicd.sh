@@ -124,21 +124,22 @@ for sec in config.sections():
         print('%s[%s]=\"%s\"' % (sec, key, val))
 ")
 
-# Group forks by fork_repo to handle repos that produce multiple cores
+# Group by (fork_repo, main_branch): grouping by repo alone collapses cores
+# that share a repo but live on different branches (GBA / GBA2P).
 declare -A REPO_FORKS_MAP
 for fork_name in ${Forks[syncing_forks]}; do
     declare -n _fork_tmp="$fork_name"
-    _repo="${_fork_tmp[fork_repo]}"
-    if [[ -v "REPO_FORKS_MAP[$_repo]" ]]; then
-        REPO_FORKS_MAP[$_repo]="${REPO_FORKS_MAP[$_repo]} $fork_name"
+    _key="${_fork_tmp[fork_repo]}|${_fork_tmp[main_branch]}"
+    if [[ -v "REPO_FORKS_MAP[$_key]" ]]; then
+        REPO_FORKS_MAP[$_key]="${REPO_FORKS_MAP[$_key]} $fork_name"
     else
-        REPO_FORKS_MAP[$_repo]="$fork_name"
+        REPO_FORKS_MAP[$_key]="$fork_name"
     fi
     unset -n _fork_tmp
 done
 
-for _repo_url in "${!REPO_FORKS_MAP[@]}"; do
-    IFS=' ' read -r -a _group <<< "${REPO_FORKS_MAP[$_repo_url]}"
+for _group_key in "${!REPO_FORKS_MAP[@]}"; do
+    IFS=' ' read -r -a _group <<< "${REPO_FORKS_MAP[$_group_key]}"
 
     # Use first fork for shared settings (upstream_repo, main_branch, quartus_image, maintainer_emails)
     declare -n _primary="${_group[0]}"
