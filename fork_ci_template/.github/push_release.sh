@@ -39,35 +39,73 @@ for ((i = 0; i < ${#COMPILATION_INPUT[@]}; i++)); do
         RELEASE_FILE="${RELEASE_FILE}.${FILE_EXTENSION}"
     fi
 
-    # Skip rebuild iff the BOT setup commit only touches .github/ scaffolding.
-    # The old predicate ("releases/${CORE} already exists") let latent build
-    # breakage hide indefinitely: a bad upstream merge could ship the old
+    # Skip rebuild iff no commit since the last release expressed real source
+    # intent. The old predicate ("releases/${CORE} already exists") let latent
+    # build breakage hide indefinitely: a bad upstream merge could ship the old
     # stale .rbf forever as long as no human pushed and Sync+Release was
-    # silently failing. Diff-based skip surfaces breakage on the next BOT
-    # tick that touches an actual source file.
+    # silently failing.
     #
-    # Diff range: last "BOT: Releasing" commit .. HEAD (NOT HEAD^..HEAD).
-    # The HEAD^ form races with concurrency cancel-in-progress: a human
-    # source push whose build is killed by a subsequent BOT setup push
-    # would leave HEAD^=source_commit, HEAD=bot_commit, diff=.github/ only
-    # → skip → source change never built. Walking back to the last release
-    # ensures every unbuilt source change since then forces a rebuild.
+    # Range: last release commit .. HEAD (NOT HEAD^..HEAD). The HEAD^ form
+    # races with concurrency cancel-in-progress: a human source push whose
+    # build is killed by a subsequent BOT setup push would leave
+    # HEAD^=source_commit, HEAD=bot_commit, diff=.github/ only → skip →
+    # source change never built. Walking back to the last release covers
+    # arbitrarily long chains of cascaded BOT setup commits.
+    #
+    # Iterate commits (not files): a file-level diff over the whole range
+    # over-rebuilds when intermediate commits explicitly opted out of CI
+    # ([skip ci]) or when sync_release.sh decided no rebuild was needed
+    # ("BOT: Merging upstream, no core released."). Skip those commits;
+    # rebuild iff any remaining commit touches a file outside .github/ or
+    # releases/. "BOT: Sync sys/ helpers from fork_ci_template." is *not*
+    # skipped — it carries real synthesis inputs (sys/joydb*.v, etc.) that
+    # we must rebuild for if its own Push Release run was raced.
     if [[ "${FORCED:-false}" != "true" ]] && \
        [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] && \
        [[ "$(git log -n 1 --pretty=format:%s)" == "BOT: Fork CI/CD setup changes." ]]; then
-        last_release=$(git log --pretty=format:%H --author="The CI/CD Bot" --grep='^BOT: Releasing ' -n 1 || true)
+        last_release=$(git log --pretty=format:%H --author="The CI/CD Bot" \
+            --grep='^BOT: Releasing \|^BOT: Merging upstream, releasing ' -n 1 || true)
         if [[ -n "${last_release}" ]]; then
-            diff_range="${last_release}..HEAD"
+            diff_range_args=("${last_release}..HEAD")
         else
-            diff_range="HEAD^..HEAD"
+            # Brand-new fork with no release yet: walk all history so the
+            # initial human source push isn't skipped if the BOT setup
+            # commit raced its first Push Release.
+            diff_range_args=(HEAD)
         fi
-        non_ci_changes=$(git diff --name-only "${diff_range}" 2>/dev/null | grep -Ev '^\.github/|^releases/|^$' || true)
-        if [[ -z "${non_ci_changes}" ]]; then
-            echo "BOT setup change is .github/ only since ${last_release:-HEAD^}. Skipping build for ${CORE_NAME[i]}."
+
+        rebuild_files=""
+        while read -r commit; do
+            [[ -z "${commit}" ]] && continue
+            commit_author=$(git log -1 --pretty=format:%an "${commit}")
+            commit_subject=$(git log -1 --pretty=format:%s "${commit}")
+            commit_body=$(git log -1 --pretty=format:%B "${commit}")
+
+            if [[ "${commit_author}" == "The CI/CD Bot" ]]; then
+                case "${commit_subject}" in
+                    "BOT: Fork CI/CD setup changes.") continue ;;
+                    "BOT: Merging upstream, no core released.") continue ;;
+                esac
+            fi
+
+            if echo "${commit_body}" | grep -qE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'; then
+                continue
+            fi
+
+            commit_files=$(git show --name-only --pretty= "${commit}" \
+                | grep -Ev '^\.github/|^releases/|^$' || true)
+            if [[ -n "${commit_files}" ]]; then
+                rebuild_files="${commit_files}"
+                break
+            fi
+        done < <(git log --pretty=tformat:%H "${diff_range_args[@]}")
+
+        if [[ -z "${rebuild_files}" ]]; then
+            echo "BOT setup change has no unbuilt source intent since ${last_release:-fork root}. Skipping build for ${CORE_NAME[i]}."
             continue
         fi
-        echo "Unbuilt source changes since ${last_release:-HEAD^}; rebuilding ${CORE_NAME[i]}:"
-        echo "${non_ci_changes}" | sed 's/^/  /'
+        echo "Unbuilt source intent since ${last_release:-fork root}; rebuilding ${CORE_NAME[i]}:"
+        echo "${rebuild_files}" | sed 's/^/  /'
     fi
 
     BUILD_INPUTS+=("${COMPILATION_INPUT[i]}")
