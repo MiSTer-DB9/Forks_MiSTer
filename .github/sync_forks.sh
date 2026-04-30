@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/retry.sh
+source "${SCRIPT_DIR}/lib/retry.sh"
+
 TEMP_DIR=""
 cleanup() {
     err=$?
@@ -30,7 +34,7 @@ sync_fork() {
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
-        exit 1
+        return 1
     fi
     local FORK_DISPATCH_URL="https://api.github.com/repos/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}/dispatches"
 
@@ -45,7 +49,7 @@ sync_fork() {
         echo
         echo "Fetching upstream (${MAIN_BRANCH}):"
         git remote add upstream ${UPSTREAM_REPO}
-        git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules upstream
+        retry -- git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules upstream
         git checkout -qf remotes/upstream/${MAIN_BRANCH}
         local LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
         echo
@@ -62,7 +66,7 @@ sync_fork() {
         echo
         echo "Fetching fork (${MAIN_BRANCH}):"
         git remote add fork ${FORK_REPO}
-        git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules fork
+        retry -- git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules fork
         git checkout -qf remotes/fork/${MAIN_BRANCH}
         echo
         if git merge-base --is-ancestor ${COMMIT_RELEASE} HEAD > /dev/null 2>&1 ; then
@@ -72,7 +76,8 @@ sync_fork() {
             echo
             echo "Sending sync request to fork:"
             echo "POST ${FORK_DISPATCH_URL}"
-            curl --fail -X POST \
+            curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
+                --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
                 -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
                 -H "Accept: application/vnd.github.everest-preview+json" \
                 -H "Content-Type: application/json" \
@@ -105,10 +110,18 @@ for sec in config.sections():
 
 echo "Syncing START!"
 
+FAILED_FORKS=()
 for fork in ${Forks[syncing_forks]}
 do
     echo "Syncing ${fork}..."
-    sync_fork $fork
+    if ! sync_fork "$fork"; then
+        >&2 echo "FORK FAILED: ${fork}"
+        FAILED_FORKS+=("$fork")
+        if [[ -n "${TEMP_DIR}" ]]; then
+            rm -rf "${TEMP_DIR}" 2>/dev/null || true
+            TEMP_DIR=""
+        fi
+    fi
     echo; echo; echo
 done
 
@@ -125,6 +138,16 @@ git reset
 date > date.txt
 git add date.txt
 git commit -m "-"
-git push --force origin date
+retry -- git push --force origin date
+
+if (( ${#FAILED_FORKS[@]} > 0 )); then
+    >&2 echo
+    >&2 echo "===== SYNC FAILURES (${#FAILED_FORKS[@]}) ====="
+    for f in "${FAILED_FORKS[@]}"; do
+        >&2 echo "  - $f"
+    done
+    >&2 echo "Other forks completed; rerun the workflow after investigating these."
+    exit 1
+fi
 
 echo "DONE."

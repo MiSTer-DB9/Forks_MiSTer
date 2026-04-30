@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/retry.sh
+source "${SCRIPT_DIR}/lib/retry.sh"
+
 setup_cicd_on_fork() {
     local RELEASE_CORE_NAME="$1"
     local UPSTREAM_REPO="$2"
@@ -15,16 +19,19 @@ setup_cicd_on_fork() {
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
-        exit 1
+        return 1
     fi
     local FORK_PUSH_URL="https://${DISPATCH_USER}:${DISPATCH_TOKEN}@github.com/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}.git"
     echo
     echo "Fetching fork:"
-    local TEMP_DIR="$(mktemp -d)"
+    local TEMP_DIR
+    TEMP_DIR="$(mktemp -d)"
+    # shellcheck disable=SC2064 # capture TEMP_DIR value at trap registration
+    trap "rm -rf '${TEMP_DIR}'" RETURN
     pushd ${TEMP_DIR} > /dev/null 2>&1
     git init > /dev/null 2>&1
     git remote add fork ${FORK_REPO}
-    git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 fork
+    retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 fork
     git checkout -qf remotes/fork/${MAIN_BRANCH} -b fork_master
     echo
 
@@ -32,7 +39,9 @@ setup_cicd_on_fork() {
 
     popd > /dev/null 2>&1
     cp -r fork_ci_template/.dockerignore ${TEMP_DIR}/
-    cp -r fork_ci_template/.github ${TEMP_DIR}/
+    # -L dereferences fork_ci_template/.github/retry.sh (symlink to .github/lib/retry.sh)
+    # so each fork receives a regular file, not a dangling symlink.
+    cp -rL fork_ci_template/.github ${TEMP_DIR}/
     if [ -f "${TEMP_DIR}/README DB9 Support.md" ] ; then
         cp "fork_ci_template/README DB9 Support.md" "${TEMP_DIR}/README DB9 Support.md"
     fi
@@ -101,14 +110,14 @@ setup_cicd_on_fork() {
     fi
 
     if [[ ${DID_COMMIT} -eq 1 ]]; then
-        git push ${FORK_PUSH_URL} fork_master:${MAIN_BRANCH}
+        retry -- git push ${FORK_PUSH_URL} fork_master:${MAIN_BRANCH}
         echo
         echo "New fork ci/cd ready to be used."
     else
         echo "Nothing to be updated."
     fi
     popd > /dev/null 2>&1
-    rm -rf ${TEMP_DIR}
+    # TEMP_DIR cleanup handled by RETURN trap above (covers error paths too).
 }
 
 source <(cat Forks.ini | python -c "
@@ -138,6 +147,7 @@ for fork_name in ${Forks[syncing_forks]}; do
     unset -n _fork_tmp
 done
 
+FAILED_FORKS=()
 for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     IFS=' ' read -r -a _group <<< "${REPO_FORKS_MAP[$_group_key]}"
 
@@ -163,7 +173,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     done
 
     echo "Setting up CI/CD for ${_FORK_REPO} (cores: ${_RELEASE_CORE_NAMES})..."
-    setup_cicd_on_fork \
+    if ! setup_cicd_on_fork \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -171,8 +181,21 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_QUARTUS_IMAGE" \
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
-        "$_MAINTAINER_EMAILS"
+        "$_MAINTAINER_EMAILS"; then
+        >&2 echo "FORK FAILED: ${_FORK_REPO} (${_RELEASE_CORE_NAMES})"
+        FAILED_FORKS+=("${_FORK_REPO}")
+    fi
     echo; echo; echo
 done
+
+if (( ${#FAILED_FORKS[@]} > 0 )); then
+    >&2 echo
+    >&2 echo "===== SETUP FAILURES (${#FAILED_FORKS[@]}) ====="
+    for f in "${FAILED_FORKS[@]}"; do
+        >&2 echo "  - $f"
+    done
+    >&2 echo "Other forks completed; rerun the workflow after investigating these."
+    exit 1
+fi
 
 echo "DONE."

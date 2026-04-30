@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=retry.sh
+source "${SCRIPT_DIR}/retry.sh"
+
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
@@ -19,7 +23,9 @@ fi
 export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
-git fetch origin --unshallow 2> /dev/null || true
+if [[ -f .git/shallow ]]; then
+    retry -- git fetch origin --unshallow
+fi
 git checkout -qf ${MAIN_BRANCH}
 git submodule update --init --recursive
 
@@ -61,7 +67,7 @@ if ! docker image inspect "${QUARTUS_IMAGE}" >/dev/null 2>&1; then
     if [ -f /tmp/docker-image.tar ]; then
         docker load -i /tmp/docker-image.tar
     else
-        docker pull "${QUARTUS_IMAGE}"
+        retry -- docker pull "${QUARTUS_IMAGE}"
         docker save "${QUARTUS_IMAGE}" -o /tmp/docker-image.tar
     fi
 fi
@@ -87,4 +93,4 @@ for ((i = 0; i < ${#BUILD_INPUTS[@]}; i++)); do
 done
 git add releases
 git commit -m "BOT: Releasing ${BUILD_RELEASE_NAMES[*]}" -m "After pushed https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
-git push origin "${MAIN_BRANCH}"
+retry -- git push origin "${MAIN_BRANCH}"

@@ -75,7 +75,8 @@ POST_DATA="{
     ]
 }"
 
-curl --fail --request POST \
+curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
+  --retry-connrefused --retry-max-time 120 --max-time 30 --request POST \
   --url https://api.sendgrid.com/v3/mail/send \
   --header "Authorization: Bearer ${NOTIFICATION_API_KEY}" \
   --header "Content-Type: application/json" \

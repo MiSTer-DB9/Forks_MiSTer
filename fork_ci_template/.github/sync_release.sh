@@ -3,6 +3,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=retry.sh
+source "${SCRIPT_DIR}/retry.sh"
+
 UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
@@ -20,7 +24,7 @@ fi
 echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
 git remote add upstream "${UPSTREAM_REPO}"
-git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
+retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
 git checkout -qf "remotes/upstream/${MAIN_BRANCH}"
 
 NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
@@ -38,7 +42,9 @@ git config --global rerere.enabled true
 
 echo
 echo "Syncing with upstream:"
-git fetch origin --unshallow 2> /dev/null || true
+if [[ -f .git/shallow ]]; then
+    retry -- git fetch origin --unshallow
+fi
 git checkout -qf "${MAIN_BRANCH}"
 
 ORIGIN_CORE_FILES=()
@@ -114,7 +120,7 @@ if [[ "${NEED_REBUILD}" == "true" ]] ; then
         if [ -f /tmp/docker-image.tar ]; then
             docker load -i /tmp/docker-image.tar
         else
-            docker pull "${QUARTUS_IMAGE}"
+            retry -- docker pull "${QUARTUS_IMAGE}"
             docker save "${QUARTUS_IMAGE}" -o /tmp/docker-image.tar
         fi
     fi
@@ -151,4 +157,4 @@ else
     git commit -m "BOT: Merging upstream, no core released."
 fi
 
-git push origin "${MAIN_BRANCH}"
+retry -- git push origin "${MAIN_BRANCH}"
