@@ -80,6 +80,16 @@ apply_db9_framework() {
     # VERILOG_FILE form.
     if [ -f sys/hps_io.v ]; then
         sed -i -E 's|^(set_global_assignment -name )VERILOG_FILE([[:space:]]+\[file join \$::quartus\(qip_path\) hps_io\.v[[:space:]]*\])|\1SYSTEMVERILOG_FILE\2|' sys/sys.qip
+
+        # Modern upstream sys/hps_io.sv labels the USER_IO command-handling
+        # always block `: uio_block` so db9_key_gate can reach `cmd` via
+        # `uio_block.cmd`. Legacy hps_io.v shipped before that rename has
+        # the same block but anonymous — Quartus errors with `object
+        # "uio_block" is not declared`. Inject the label on the unique
+        # always block whose first declaration is `reg [15:0] cmd;`.
+        if ! grep -q ": uio_block" sys/hps_io.v; then
+            perl -i -0pe 's{always\@\(posedge clk_sys\) begin\n\treg \[15:0\] cmd;}{// [MiSTer-DB9-Pro BEGIN] - named so db9_key_gate can reach in via uio_block.cmd\nalways\@(posedge clk_sys) begin : uio_block\n// [MiSTer-DB9-Pro END]\n\treg [15:0] cmd;}' sys/hps_io.v
+        fi
     fi
 
     git add sys/joydb9md.v sys/joydb15.v sys/joydb9saturn.v sys/joydb.sv \
