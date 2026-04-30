@@ -10,6 +10,13 @@ COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
 QUARTUS_IMAGE="<<QUARTUS_IMAGE>>"
 
+# [MiSTer-DB9 BEGIN] - fork-only cores have no upstream; sync_release is a no-op
+if [[ -z "${UPSTREAM_REPO}" ]]; then
+    echo "No UPSTREAM_REPO configured — fork-only core, skipping sync."
+    exit 0
+fi
+# [MiSTer-DB9 END]
+
 echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
 git remote add upstream "${UPSTREAM_REPO}"
