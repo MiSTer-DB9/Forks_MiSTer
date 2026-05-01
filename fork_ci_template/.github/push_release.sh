@@ -8,16 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/retry.sh"
 
 # [MiSTer-DB9 BEGIN] - skip build on pristine-upstream forks (not yet DB9-ported).
-# Mirrors the saturn_unlocked tripwire used by .github/setup_cicd.sh in the
+# Mirrors the joydb9saturn.v tripwire used by .github/setup_cicd.sh in the
 # orchestrator repo. Without this guard, the first push to a freshly-cloned
 # fork (the BOT setup commit) walks all-history at the per-commit rebuild
 # scan below, finds upstream human commits, and runs Quartus on un-ported
 # HDL — emitting a stock-upstream .rbf into releases/.
-# Guard layout: file-exists test first so fork-only repos (no sys/ tree,
-# e.g. Main_DB9) fall through unchanged; only HDL forks with hps_io.sv
-# lacking the Pro gate output exit early.
-if [[ -f sys/hps_io.sv ]] && ! grep -q saturn_unlocked sys/hps_io.sv 2>/dev/null; then
-    echo "Fork is pristine upstream (saturn_unlocked absent in sys/hps_io.sv). Run apply_db9_framework.sh before enabling builds. Skipping."
+# Truth source: presence of sys/joydb9saturn.v (canonical per
+# porting/STATUS.md, works for both hps_io.sv and pre-SV-rename hps_io.v
+# cores). Fork-only repos with a sys/ tree but no DB9 port (and Main_DB9
+# with no sys/ tree at all) fall through the same test.
+if [[ -d sys ]] && [[ ! -f sys/joydb9saturn.v ]]; then
+    echo "Fork is pristine upstream (sys/joydb9saturn.v absent). Run apply_db9_framework.sh before enabling builds. Skipping."
     exit 0
 fi
 # [MiSTer-DB9 END]

@@ -45,19 +45,22 @@ setup_cicd_on_fork() {
         cp "fork_ci_template/README DB9 Support.md" "${TEMP_DIR}/README DB9 Support.md"
     fi
 
-    # Sync sys/ helpers into already-ported forks. Tripwire: only forks whose
-    # sys/hps_io.sv carries the Pro key-gate output (`saturn_unlocked`) are
-    # considered ported. Pristine upstream forks and Main_MiSTer (no sys/hps_io.sv)
-    # skip — apply_db9_framework.sh is the only path that performs the initial port.
+    # Sync sys/ helpers into already-ported forks. Tripwire: presence of
+    # sys/joydb9saturn.v in the fork's working tree — the canonical
+    # DB9-ported truth source per porting/STATUS.md and
+    # porting/scripts/list_saturn_ports.sh. Works for both hps_io.sv and
+    # pre-SV-rename hps_io.v cores (e.g. AliceMC10). Pristine upstream
+    # forks and Main_MiSTer (no sys/ tree) skip — apply_db9_framework.sh is
+    # the only path that performs the initial port and drops joydb9saturn.v.
     SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
     SYNC_SYS=0
-    if grep -q saturn_unlocked "${TEMP_DIR}/sys/hps_io.sv" 2>/dev/null; then
+    if [[ -f "${TEMP_DIR}/sys/joydb9saturn.v" ]]; then
         SYNC_SYS=1
         for f in "${SYS_HELPERS[@]}"; do
             cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/sys/${f}"
         done
     else
-        echo "  Skipping sys/ helper sync: ${FORK_REPO} not Pro-form (saturn_unlocked absent in sys/hps_io.sv)."
+        echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (sys/joydb9saturn.v absent)."
     fi
 
     pushd ${TEMP_DIR} > /dev/null 2>&1
