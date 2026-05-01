@@ -30,16 +30,27 @@ jobs:
 
     - uses: actions/checkout@v6
 
+    - name: Resolve Quartus image
+      id: image
+      run: |
+        first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
+        image=$(./.github/detect_quartus_image.sh "${first_input}")
+        echo "image=${image}" >> "$GITHUB_OUTPUT"
+        echo "Resolved Quartus image: ${image}"
+      env:
+        QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
+
     - name: Cache Docker image
       uses: actions/cache@v5
       with:
         path: /tmp/docker-image.tar
-        key: docker-<<QUARTUS_IMAGE>>
+        key: docker-${{ steps.image.outputs.image }}
 
     - name: Release
       run: ./.github/push_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
         FORCED: ${{ github.event.client_payload.forced }}
         # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
         # push_release.sh materialises sys/db9_key_secret.vh from this env var
