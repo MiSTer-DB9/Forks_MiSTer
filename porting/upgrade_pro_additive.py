@@ -89,15 +89,16 @@ def _inject_pristine_hps_io(text: str, notes: list[str], path: Path) -> str:
     if re.search(r'^[ \t]*input[ \t]+\[15:0\][ \t]+joy_raw,', text, re.MULTILINE):
         return text  # already injected (legacy or previous run)
 
-    # 1. Insert joy_raw input after the joystick_l_analog_5 port. That line is
-    # stable across years of upstream history and unambiguous (no other
-    # joystick_l_analog_5 mention in the module body).
+    # 1. Insert joy_raw input before the ps2_key port. ps2_key has been a
+    # core hps_io output since the module was created and lives outside the
+    # analog joystick cluster, so it survives even a wholesale restructuring
+    # of the analog ports.
     m = re.search(
-        r'^([ \t]*)output[ \t]+reg[ \t]+\[15:0\][ \t]+joystick_l_analog_5,[^\n]*\n',
+        r'^([ \t]*)output[ \t]+reg[ \t]+\[10:0\][ \t]+ps2_key\b[^\n]*\n',
         text, re.MULTILINE,
     )
     if not m:
-        notes.append(f'{path}: pristine inject — joystick_l_analog_5 anchor missing, joy_raw skipped')
+        notes.append(f'{path}: pristine inject — ps2_key anchor missing, joy_raw skipped')
     else:
         indent = m.group(1)
         insert = (
@@ -105,7 +106,7 @@ def _inject_pristine_hps_io(text: str, notes: list[str], path: Path) -> str:
             f'{indent}input      [15:0] joy_raw,\n'
             f'{indent}// [MiSTer-DB9 END]\n'
         )
-        text = text[:m.end()] + insert + text[m.end():]
+        text = text[:m.start()] + insert + text[m.start():]
         notes.append(f'{path}: pristine inject — added joy_raw input port')
 
     # 2. Insert 'h0f handler at the head of the casex(cmd) inside uio_block.
@@ -234,8 +235,7 @@ def _inject_pristine_sys_top(text: str, notes: list[str], path: Path) -> str:
     Single gate: the whole pristine inject only runs when `inout [6:0]
     USER_IO` is still present. Once we widen to `[7:0]` (or a legacy fork
     already widened it), every substep is skipped — this prevents partial
-    re-injection on cores that landed at an intermediate ad-hoc state. Each
-    substep additionally guards on its own sentinel for safety.
+    re-injection on cores that landed at an intermediate ad-hoc state.
     """
     if not re.search(r'^[ \t]*inout[ \t]+\[6:0\][ \t]+USER_IO\b', text, re.MULTILINE):
         return text  # not pristine — let the legacy-path passes handle it
@@ -252,15 +252,14 @@ def _inject_pristine_sys_top(text: str, notes: list[str], path: Path) -> str:
         )
         notes.append(f'{path}: pristine inject — SD_SPI_CS port commented out')
 
-    if re.search(r'^[ \t]*inout[ \t]+\[6:0\][ \t]+USER_IO\b', text, re.MULTILINE):
-        text = re.sub(
-            r'^([ \t]*)inout[ \t]+\[6:0\][ \t]+USER_IO([^\n]*)\n',
-            r'\1// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support\n'
-            r'\1inout   [7:0] USER_IO\2\n'
-            r'\1// [MiSTer-DB9 END]\n',
-            text, count=1, flags=re.MULTILINE,
-        )
-        notes.append(f'{path}: pristine inject — USER_IO widened to 8 bits')
+    text = re.sub(
+        r'^([ \t]*)inout[ \t]+\[6:0\][ \t]+USER_IO([^\n]*)\n',
+        r'\1// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support\n'
+        r'\1inout   [7:0] USER_IO\2\n'
+        r'\1// [MiSTer-DB9 END]\n',
+        text, count=1, flags=re.MULTILINE,
+    )
+    notes.append(f'{path}: pristine inject — USER_IO widened to 8 bits')
 
     # 2. deb_osd OR-gate with user_osd. Anchor on the exact upstream line.
     if 'btn_o | user_osd' not in text:
