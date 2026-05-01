@@ -4,13 +4,10 @@
 # helpers, land DB9 + Pro additions in `sys/hps_io.sv` / `sys/sys_top.v` /
 # `sys/sys.tcl`, and lift `<core>.sv` to the joydb wrapper-thin form.
 #
-# Two paths handle whatever shape `sys/` is in:
-#   * pristine upstream — `sys.patch` applies cleanly.
-#   * legacy-patched   — fall back to `upgrade_pro_additive.py`, which adds
-#     only the missing Pro extensions on top of the existing DB9 baseline.
-#     Avoids resetting `sys/` from upstream — that can pull in newer
-#     sys_top.v versions referencing emu-module ports the fork's `<core>.sv`
-#     doesn't yet declare (HDMI_BLACKOUT, HDMI_BOB_DEINT, ...).
+# `upgrade_pro_additive.py` handles both pristine-upstream and legacy-patched
+# `sys/` shapes via regex-anchored insertions on stable upstream landmarks.
+# This replaces the deprecated `fork_ci_template/sys.patch` static diff which
+# broke whenever upstream context drifted.
 #
 # Idempotent: re-running on an already-Pro fork is a no-op.
 
@@ -18,11 +15,9 @@ set -euo pipefail
 
 apply_db9_framework() {
     local dir="${1}"
-    local patch upgrader porter eol_io
-    patch=$(realpath fork_ci_template/sys.patch)
+    local upgrader porter
     upgrader=$(realpath porting/upgrade_pro_additive.py)
     porter=$(realpath porting/port_core_full.py)
-    eol_io=$(realpath porting/_eol_io.py)
 
     cp -r fork_ci_template/sys "${dir}/"
 
@@ -33,32 +28,11 @@ apply_db9_framework() {
     # forbids renaming upstream files — and instead flip its sys.qip entry
     # from VERILOG_FILE to SYSTEMVERILOG_FILE further down so Quartus
     # compiles it in SV mode.
-    local hps_io hps_io_rel
+    local hps_io_rel
     if [ -f "${dir}/sys/hps_io.sv" ]; then
         hps_io_rel='sys/hps_io.sv'
     else
         hps_io_rel='sys/hps_io.v'
-    fi
-    hps_io="${dir}/${hps_io_rel}"
-
-    # Snapshot EOL of the three patch targets so we can restore after
-    # `git apply` (which always lands LF lines, mixing them with CRLF
-    # targets). The additive-upgrader path preserves EOL internally.
-    local nls
-    nls=$(python3 "${eol_io}" snapshot \
-        "${hps_io}" "${dir}/sys/sys_top.v" "${dir}/sys/sys.tcl")
-    read -r nl_hps nl_top nl_tcl <<<"${nls}"
-
-    if grep -q saturn_unlocked "${hps_io}" 2>/dev/null; then
-        echo "  ${dir}: already at Pro form — skipping sys.patch"
-    elif git -C "${dir}" apply --check --ignore-whitespace < "${patch}" 2>/dev/null; then
-        echo "  ${dir}: pristine upstream sys/ — applying sys.patch"
-        git -C "${dir}" apply --ignore-whitespace < "${patch}"
-        python3 "${eol_io}" apply "${nl_hps}" "${hps_io}"
-        python3 "${eol_io}" apply "${nl_top}" "${dir}/sys/sys_top.v"
-        python3 "${eol_io}" apply "${nl_tcl}" "${dir}/sys/sys.tcl"
-    else
-        echo "  ${dir}: legacy-patched sys/ — running additive Pro upgrader"
     fi
 
     python3 "${upgrader}" "${dir}"
