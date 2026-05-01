@@ -38,7 +38,6 @@ setup_cicd_on_fork() {
     rm -rf ${TEMP_DIR}/.github || true
 
     popd > /dev/null 2>&1
-    cp -r fork_ci_template/.dockerignore ${TEMP_DIR}/
     # -L dereferences fork_ci_template/.github/retry.sh (symlink to .github/lib/retry.sh)
     # so each fork receives a regular file, not a dangling symlink.
     cp -rL fork_ci_template/.github ${TEMP_DIR}/
@@ -86,11 +85,10 @@ setup_cicd_on_fork() {
     DID_COMMIT=0
 
     git add .github
-    git add .dockerignore
     git add "README DB9 Support.md" > /dev/null 2>&1 || true
 
     if ! git diff --staged --quiet --exit-code ; then
-        echo "Committing .github / .dockerignore / README changes."
+        echo "Committing .github / README changes."
         # Subject "BOT: Fork CI/CD setup changes." is matched by push_release.sh
         # to skip a build for already-released cores when only setup files moved.
         git commit -m "BOT: Fork CI/CD setup changes." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
