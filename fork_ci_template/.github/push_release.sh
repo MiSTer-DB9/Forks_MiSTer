@@ -7,6 +7,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=retry.sh
 source "${SCRIPT_DIR}/retry.sh"
 
+# [MiSTer-DB9 BEGIN] - skip build on pristine-upstream forks (not yet DB9-ported).
+# Mirrors the saturn_unlocked tripwire used by .github/setup_cicd.sh in the
+# orchestrator repo. Without this guard, the first push to a freshly-cloned
+# fork (the BOT setup commit) walks all-history at the per-commit rebuild
+# scan below, finds upstream human commits, and runs Quartus on un-ported
+# HDL — emitting a stock-upstream .rbf into releases/.
+# Guard layout: file-exists test first so fork-only repos (no sys/ tree,
+# e.g. Main_DB9) fall through unchanged; only HDL forks with hps_io.sv
+# lacking the Pro gate output exit early.
+if [[ -f sys/hps_io.sv ]] && ! grep -q saturn_unlocked sys/hps_io.sv 2>/dev/null; then
+    echo "Fork is pristine upstream (saturn_unlocked absent in sys/hps_io.sv). Run apply_db9_framework.sh before enabling builds. Skipping."
+    exit 0
+fi
+# [MiSTer-DB9 END]
+
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
