@@ -536,19 +536,21 @@ def strip_user_mode_ternary(expr: str) -> str:
 
 
 def is_already_wrapped(text: str, match_start: int, comment_prefix: str = '//') -> bool:
-    """Return True if the line at `match_start` is currently inside an open
-    `[MiSTer-DB9 BEGIN/END]` (or Pro) block. We count BEGIN vs END in the
-    nearest ~6 preceding lines: an unmatched BEGIN means we're inside a
-    block; matched (or no markers) means we're not."""
+    """Walk backwards from `match_start` to the nearest BEGIN/END marker;
+    BEGIN means wrapped, END (or no marker) means not. A fixed-window count
+    of BEGIN minus END mis-classifies a tightly-wrapped line whose window
+    also captures the END of an unrelated earlier block."""
+    # Bounded lookback — real wrapped blocks are short; unbounded would split
+    # the entire file prefix on every call.
     head = text[:match_start]
-    preceding = head.split('\n')[-7:]
-    open_blocks = 0
-    for line in preceding:
-        if '[MiSTer-DB9' in line and 'BEGIN]' in line:
-            open_blocks += 1
-        elif '[MiSTer-DB9' in line and 'END]' in line:
-            open_blocks -= 1
-    return open_blocks > 0
+    for line in reversed(head.rsplit('\n', 64)[:-1]):
+        if '[MiSTer-DB9' not in line:
+            continue
+        if 'BEGIN]' in line:
+            return True
+        if 'END]' in line:
+            return False
+    return False
 
 
 def wrap_block(text: str, line_re: re.Pattern, label: str, comment_prefix: str = '//') -> tuple[str, int]:

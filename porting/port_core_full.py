@@ -405,6 +405,11 @@ def strip_players_line(text: str) -> str:
 # ---- Step 5: widen status to [127:0] ----
 
 def widen_status(text: str) -> tuple[str, bool]:
+    # Skip cores that put joy_type/joy_2p in the lower 64 bits (Minimig uses
+    # status[63:62]/[61]). Without a high-bit reference, widening would
+    # rewrite the declaration on every run and break idempotency.
+    if not re.search(r'status\[(12[5-7]|127:126)\]', text):
+        return text, False
     m = re.search(r'^([ \t]*)wire[ \t]+\[(?:31|63):0\][ \t]+status;[^\n]*\n', text, re.MULTILINE)
     if not m:
         return text, False
@@ -662,11 +667,11 @@ def port_core(core_dir: Path) -> list[str]:
         text = new_text
         notes.append(f'{sv.name}: stripped {n_um} stale .USER_MODE() binding from joydb instance')
 
-    # 1P-only cores never reference `joydb_2[N]` in the joystick mux; for
-    # those, the `UserIO Players` toggle is meaningless and gets dropped.
-    # Check `orig` (pre-port) since the live wrapper hookup adds a non-indexed
-    # `joydb_2` port binding that we want to ignore.
-    is_1p = 'joydb_2[' not in orig
+    # 2P cores reference `joydb_2[N]` or gate joystick_1 on `joydb_2ena ?`
+    # (ao486, TRS-80 use the ternary form without an indexed slice). The
+    # port-binding `.joydb_2(...)` is always present and decorative.
+    is_1p = ('joydb_2[' not in orig
+             and not re.search(r'\bjoydb_2ena[ \t]*\?', orig))
 
     # GBA-style legacy ref rename — runs after strip_joydb_mux_gba (no-op on
     # cores that didn't match) and before WRAPPER_BLOCK so we don't rewrite
