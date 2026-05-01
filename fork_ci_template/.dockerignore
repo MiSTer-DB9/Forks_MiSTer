@@ -1,9 +1,0 @@
-doc
-docs
-release*
-Dockerfile
-.dockerignore
-.gitignore
-.git
-.github
-.DS_Store
