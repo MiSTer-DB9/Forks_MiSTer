@@ -12,7 +12,7 @@ CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
-QUARTUS_IMAGE="<<QUARTUS_IMAGE>>"
+QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 
 # [MiSTer-DB9 BEGIN] - fork-only cores have no upstream; sync_release is a no-op
 if [[ -z "${UPSTREAM_REPO}" ]]; then

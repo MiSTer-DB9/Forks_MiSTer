@@ -26,7 +26,7 @@ CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
-QUARTUS_IMAGE="<<QUARTUS_IMAGE>>"
+QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 
 if [[ "${FORCED:-false}" != "true" ]] && \
    [[ "$(git log -n 1 --pretty=format:%an)" == "The CI/CD Bot" ]] && \
