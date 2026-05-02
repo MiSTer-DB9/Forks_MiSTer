@@ -13,13 +13,22 @@ source "${SCRIPT_DIR}/retry.sh"
 # fork (the BOT setup commit) walks all-history at the per-commit rebuild
 # scan below, finds upstream human commits, and runs Quartus on un-ported
 # HDL — emitting a stock-upstream .rbf into releases/.
-# Truth source: presence of sys/joydb9saturn.v (canonical per
-# porting/STATUS.md, works for both hps_io.sv and pre-SV-rename hps_io.v
-# cores). Fork-only repos with a sys/ tree but no DB9 port (and Main_DB9
-# with no sys/ tree at all) fall through the same test.
-if [[ -d sys ]] && [[ ! -f sys/joydb9saturn.v ]]; then
-    echo "Fork is pristine upstream (sys/joydb9saturn.v absent). Run apply_db9_framework.sh before enabling builds. Skipping."
-    exit 0
+# Truth source: presence of joydb9saturn.v under any */sys/ within depth 4
+# (canonical per porting/STATUS.md, works for both hps_io.sv and
+# pre-SV-rename hps_io.v cores; depth-limited find handles non-standard
+# layouts like Arcade-Cave's quartus/sys/). Fork-only repos with a sys/
+# tree but no DB9 port (and Main_DB9 with no sys/ tree at all) fall
+# through the same test.
+SATURN_HIT=$(find . -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
+if [[ -z "${SATURN_HIT}" ]]; then
+    # Saturn-hit miss is ambiguous: pristine upstream (skip) vs. fork-only with no
+    # sys/ tree at all (Main_DB9 — fall through and build). Disambiguate via a
+    # second find only when needed, so the hot path (ported forks) walks once.
+    ANY_SYS=$(find . -maxdepth 4 -type d -name sys -print -quit 2>/dev/null)
+    if [[ -n "${ANY_SYS}" ]]; then
+        echo "Fork is pristine upstream (no */sys/joydb9saturn.v within depth 4). Run apply_db9_framework.sh before enabling builds. Skipping."
+        exit 0
+    fi
 fi
 # [MiSTer-DB9 END]
 

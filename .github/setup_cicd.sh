@@ -46,21 +46,28 @@ setup_cicd_on_fork() {
     fi
 
     # Sync sys/ helpers into already-ported forks. Tripwire: presence of
-    # sys/joydb9saturn.v in the fork's working tree — the canonical
+    # joydb9saturn.v under any */sys/ within depth 4 — the canonical
     # DB9-ported truth source per porting/STATUS.md and
     # porting/scripts/list_saturn_ports.sh. Works for both hps_io.sv and
-    # pre-SV-rename hps_io.v cores (e.g. AliceMC10). Pristine upstream
-    # forks and Main_MiSTer (no sys/ tree) skip — apply_db9_framework.sh is
-    # the only path that performs the initial port and drops joydb9saturn.v.
+    # pre-SV-rename hps_io.v cores (e.g. AliceMC10). The depth-limited
+    # find handles non-standard layouts (e.g. Arcade-Cave's quartus/sys/)
+    # without per-fork configuration; same pattern as materialize_secret.sh.
+    # Pristine upstream forks and Main_MiSTer (no sys/ tree) skip —
+    # apply_db9_framework.sh is the only path that performs the initial
+    # port and drops joydb9saturn.v.
     SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
     SYNC_SYS=0
-    if [[ -f "${TEMP_DIR}/sys/joydb9saturn.v" ]]; then
+    SYS_REL_DIR=""
+    SATURN_HIT=$(find "${TEMP_DIR}" -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
+    if [[ -n "${SATURN_HIT}" ]]; then
+        SYS_DIR=$(dirname "${SATURN_HIT}")
+        SYS_REL_DIR=${SYS_DIR#"${TEMP_DIR}"/}
         SYNC_SYS=1
         for f in "${SYS_HELPERS[@]}"; do
-            cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/sys/${f}"
+            cp "fork_ci_template/sys/${f}" "${SYS_DIR}/${f}"
         done
     else
-        echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (sys/joydb9saturn.v absent)."
+        echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (no */sys/joydb9saturn.v within depth 4)."
     fi
 
     # jtcores carries jtframe-native joydb* under modules/jtframe/...; only the
@@ -117,7 +124,7 @@ setup_cicd_on_fork() {
     # Sys helper drift commit (separate subject so push_release.sh rebuilds).
     if [[ ${SYNC_SYS} -eq 1 ]]; then
         for f in "${SYS_HELPERS[@]}"; do
-            git add "sys/${f}"
+            git add "${SYS_REL_DIR}/${f}"
         done
         if ! git diff --staged --quiet --exit-code ; then
             echo "Committing sys/ helper drift."
