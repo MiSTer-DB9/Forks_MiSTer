@@ -88,25 +88,30 @@ setup_cicd_on_fork() {
 
     pushd ${TEMP_DIR} > /dev/null 2>&1
 
-    sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/.github/sync_release.sh
-    sed -i "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" ${TEMP_DIR}/.github/push_release.sh
-    sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/push_release.sh
-    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/push_release.sh
-    sed -i "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" ${TEMP_DIR}/.github/push_release.sh
-    sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
-    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
-    sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/.github/workflows/sync_release.yml
-    sed -i "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
-    sed -i "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
-    sed -i "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
-    sed -i "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" ${TEMP_DIR}/.github/workflows/push_release.yml
-
-    git config --global user.email "theypsilon@gmail.com"
-    git config --global user.name "The CI/CD Bot"
+    sed -i \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+        -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        ${TEMP_DIR}/.github/sync_release.sh
+    sed -i \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        ${TEMP_DIR}/.github/push_release.sh
+    sed -i \
+        -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        ${TEMP_DIR}/.github/workflows/sync_release.yml
+    sed -i \
+        -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        ${TEMP_DIR}/.github/workflows/push_release.yml
 
     DID_COMMIT=0
 
@@ -183,11 +188,17 @@ for fork_name in ${Forks[syncing_forks]}; do
     unset -n _fork_tmp
 done
 
-FAILED_FORKS=()
+git config --global user.email "theypsilon@gmail.com"
+git config --global user.name "The CI/CD Bot"
+
+RESULTS_DIR="$(mktemp -d)"
+trap 'rm -rf "${RESULTS_DIR}"' EXIT INT
+
+# NUL-delimit fields so space-bearing values (RELEASE_CORE_NAMES,
+# COMPILATION_INPUT(S), COMPILATION_OUTPUT(S)) survive xargs without splitting.
 for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     IFS=' ' read -r -a _group <<< "${REPO_FORKS_MAP[$_group_key]}"
 
-    # Use first fork for shared settings (upstream_repo, main_branch, quartus_image, maintainer_emails)
     declare -n _primary="${_group[0]}"
     _UPSTREAM_REPO="${_primary[upstream_repo]:-}"
     _FORK_REPO="${_primary[fork_repo]}"
@@ -196,7 +207,6 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
     unset -n _primary
 
-    # Build space-separated compilation params (bash array literals in templates)
     _RELEASE_CORE_NAMES=""
     _COMPILATION_INPUTS=""
     _COMPILATION_OUTPUTS=""
@@ -208,8 +218,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    echo "Setting up CI/CD for ${_FORK_REPO} (cores: ${_RELEASE_CORE_NAMES})..."
-    if ! setup_cicd_on_fork \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -217,12 +226,44 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_QUARTUS_IMAGE" \
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
-        "$_MAINTAINER_EMAILS"; then
-        >&2 echo "FORK FAILED: ${_FORK_REPO} (${_RELEASE_CORE_NAMES})"
-        FAILED_FORKS+=("${_FORK_REPO}")
-    fi
-    echo; echo; echo
+        "$_MAINTAINER_EMAILS"
+done > "${RESULTS_DIR}/groups.nul"
+
+export -f setup_cicd_on_fork retry
+export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
+
+# Network-bound; 16-way default fits the runner's bandwidth and well under
+# GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
+xargs -0 -n 8 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+    bash -c '
+        set -uo pipefail
+        SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
+        LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
+        {
+            echo "Setting up CI/CD for $3 (cores: $1)..."
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"; then
+                rc=0
+            else
+                rc=$?
+                echo "FORK FAILED: $3 ($1)" >&2
+                printf "%s\t%s\n" "$3" "$1" > "${RESULTS_DIR}/${SAFE_NAME}.fail"
+            fi
+            echo; echo; echo
+            exit $rc
+        } >"$LOG" 2>&1
+    ' _
+
+shopt -s nullglob
+for _f in "${RESULTS_DIR}"/*.log; do
+    cat "$_f"
 done
+
+FAILED_FORKS=()
+for _ff in "${RESULTS_DIR}"/*.fail; do
+    IFS=$'\t' read -r _url _cores < "$_ff"
+    FAILED_FORKS+=("${_url} (${_cores})")
+done
+shopt -u nullglob
 
 if (( ${#FAILED_FORKS[@]} > 0 )); then
     >&2 echo
