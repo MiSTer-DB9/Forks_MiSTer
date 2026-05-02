@@ -30,10 +30,10 @@ if [[ -z "${MASTER_ROOT_HEX:-}" ]] || [[ ! "${MASTER_ROOT_HEX}" =~ ^[0-9a-fA-F]{
     exit 0
 fi
 
-wrote_anything=0
+KEY_CPP=$(find . -maxdepth 4 -name db9_key.cpp -type f -print -quit 2>/dev/null)
+GATE_FILE=$(find . -maxdepth 4 -path '*/sys/db9_key_gate.sv' -type f -print -quit 2>/dev/null)
 
 # ---- HPS-side: db9_key_secret.h ----
-KEY_CPP=$(find . -maxdepth 4 -name db9_key.cpp -type f -print -quit 2>/dev/null)
 if [[ -n "${KEY_CPP}" ]]; then
     SECRET_H="$(dirname "${KEY_CPP}")/db9_key_secret.h"
     SECRET_H="${SECRET_H}" python3 - <<PY
@@ -46,11 +46,9 @@ with open(os.environ["SECRET_H"], "w") as f:
     f.write(f"static const uint8_t MASTER_ROOT[32] = {{\n\t{rows}\n}};\n")
 PY
     echo "[DB9-Key v1.5] ${SECRET_H} materialized"
-    wrote_anything=1
 fi
 
 # ---- FPGA-side: <core>/sys/db9_key_secret.vh ----
-GATE_FILE=$(find . -maxdepth 4 -path '*/sys/db9_key_gate.sv' -type f -print -quit 2>/dev/null)
 if [[ -n "${GATE_FILE}" ]]; then
     SECRET_VH="$(dirname "${GATE_FILE}")/db9_key_secret.vh"
     LE_HEX=$(echo -n "${MASTER_ROOT_HEX}" | fold -w2 | tac | tr -d '\n')
@@ -63,10 +61,9 @@ if [[ -n "${GATE_FILE}" ]]; then
 \`endif
 EOF
     echo "[DB9-Key v1.5] ${SECRET_VH} materialized (LE-encoded)"
-    wrote_anything=1
 fi
 
-if [[ "${wrote_anything}" = "0" ]]; then
+if [[ -z "${KEY_CPP}" && -z "${GATE_FILE}" ]]; then
     echo "[DB9-Key v1.5] no target detected (no db9_key.cpp, no */sys/db9_key_gate.sv within depth 4) — nothing to do"
 fi
 # [MiSTer-DB9-Pro END]
