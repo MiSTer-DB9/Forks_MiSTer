@@ -1,0 +1,32 @@
+name: Sync jtcores
+
+# jtcores can't ride setup_cicd.yml (which rm -rf's .github and stamps the
+# DB9 template) — jotego owns that tree. This workflow only mirrors the
+# 3 gate-trio files into modules/jtframe/target/mister/hdl/sys/ on jtcores
+# master so the FPGA SipHash stays byte-equal to Main_MiSTer/siphash24.c.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - fork_ci_template/sys/siphash24.v
+      - fork_ci_template/sys/db9_key_gate.sv
+      - fork_ci_template/sys/db9_key_secret.vh
+      - .github/sync_jtcores.sh
+      - .github/workflows/sync_jtcores.yml
+  workflow_dispatch:
+  repository_dispatch:
+    types: [sync_jtcores]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Sync jtcores
+      run: ./.github/sync_jtcores.sh
+      env:
+        DISPATCH_USER: theypsilon
+        DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}

@@ -70,22 +70,6 @@ setup_cicd_on_fork() {
         echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (no */sys/joydb9saturn.v within depth 4)."
     fi
 
-    # jtcores carries jtframe-native joydb* under modules/jtframe/...; only the
-    # gate-trio (siphash + db9_key_gate + secret header) is byte-shared with
-    # the rest of the org. Tripwire is db9_key_gate.sv at the jtframe path —
-    # added by the v1.5 Phase 2 wiring, jtcores-only, never produced by Jotego
-    # upstream. apply_db9_framework.sh doesn't touch this path either, so the
-    # tripwire is unambiguous.
-    JTFRAME_SYS_PATH="modules/jtframe/target/mister/hdl/sys"
-    JTFRAME_GATE_FILES=(siphash24.v db9_key_gate.sv db9_key_secret.vh)
-    SYNC_JTFRAME=0
-    if [[ -f "${TEMP_DIR}/${JTFRAME_SYS_PATH}/db9_key_gate.sv" ]]; then
-        SYNC_JTFRAME=1
-        for f in "${JTFRAME_GATE_FILES[@]}"; do
-            cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/${JTFRAME_SYS_PATH}/${f}"
-        done
-    fi
-
     pushd ${TEMP_DIR} > /dev/null 2>&1
 
     sed -i \
@@ -134,18 +118,6 @@ setup_cicd_on_fork() {
         if ! git diff --staged --quiet --exit-code ; then
             echo "Committing sys/ helper drift."
             git commit -m "BOT: Sync sys/ helpers from fork_ci_template." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
-            DID_COMMIT=1
-        fi
-    fi
-
-    # jtframe gate-trio drift commit (jtcores variant of the sys/ helper sync).
-    if [[ ${SYNC_JTFRAME} -eq 1 ]]; then
-        for f in "${JTFRAME_GATE_FILES[@]}"; do
-            git add "${JTFRAME_SYS_PATH}/${f}"
-        done
-        if ! git diff --staged --quiet --exit-code ; then
-            echo "Committing jtframe gate-trio drift."
-            git commit -m "BOT: Sync jtframe sys/ gate files from fork_ci_template." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
             DID_COMMIT=1
         fi
     fi
