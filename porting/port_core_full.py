@@ -52,8 +52,15 @@ def find_emu_sv(core_dir: Path) -> Path | None:
 
 WRAPPER_BLOCK = """// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
-wire   [1:0] joy_type        = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
+wire   [1:0] joy_type_raw    = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
 wire         joy_2p          = status[125];
+// SNAC priority: when SNAC is enabled, neutralize UserJoy/joydb path.
+// SNAC cores override the RHS of `snac_active` with their per-core SNAC enable
+// signal (e.g. raw_serial, snac, snacPort1|snacPort2). Default 1'b0 means
+// non-SNAC cores behave identically to before. The porter preserves a custom
+// RHS across re-runs (extract_snac_active_rhs).
+wire         snac_active     = 1'b0;
+wire   [1:0] joy_type        = snac_active ? 2'd0 : joy_type_raw;
 wire         joy_db9md_en    = (joy_type == 2'd2);
 wire         joy_db15_en     = (joy_type == 2'd3);
 wire         joy_any_en      = |joy_type;
@@ -121,6 +128,42 @@ USER_OSD_END_RE = re.compile(
 )
 
 
+# `wire snac_active = <rhs>;` recogniser. Used to preserve hand-edited per-core
+# SNAC-enable expressions across re-runs of the porter. Default RHS values
+# (1'b0, 0, 1'd0, 1'h0) are treated as "no override" — the porter regenerates
+# the wrapper boilerplate fresh.
+SNAC_ACTIVE_RE = re.compile(
+    r'^[ \t]*wire[ \t]+snac_active[ \t]*=[ \t]*([^;]+?)[ \t]*;',
+    flags=re.MULTILINE,
+)
+SNAC_ACTIVE_DEFAULT_LINE_RE = re.compile(
+    r"^wire[ \t]+snac_active[ \t]+=[ \t]+1'b0;",
+    flags=re.MULTILINE,
+)
+
+
+def extract_snac_active_rhs(old_span: str) -> str | None:
+    """Return non-default RHS of `wire snac_active = <rhs>;` in old_span, else None."""
+    m = SNAC_ACTIVE_RE.search(old_span)
+    if not m:
+        return None
+    rhs = m.group(1).strip()
+    if rhs in ("1'b0", "0", "1'd0", "1'h0"):
+        return None
+    return rhs
+
+
+def _wrapper_with_snac_rhs(rhs: str | None) -> str:
+    """Return WRAPPER_BLOCK with the `wire snac_active = ...;` RHS substituted."""
+    if rhs is None:
+        return WRAPPER_BLOCK
+    return SNAC_ACTIVE_DEFAULT_LINE_RE.sub(
+        f"wire         snac_active     = {rhs};",
+        WRAPPER_BLOCK,
+        count=1,
+    )
+
+
 def replace_joy_flag_block(text: str) -> tuple[str, bool]:
     m_start = CLK_JOY_START_RE.search(text)
     if not m_start:
@@ -146,7 +189,8 @@ def replace_joy_flag_block(text: str) -> tuple[str, bool]:
     if end_marker:
         end += end_marker.end()
 
-    return text[:start] + WRAPPER_BLOCK + text[end:], True
+    rhs = extract_snac_active_rhs(text[start:end])
+    return text[:start] + _wrapper_with_snac_rhs(rhs) + text[end:], True
 
 
 # ---- Step 1b: replace legacy joydbmix wrapper instance ----
@@ -176,7 +220,8 @@ def replace_joydbmix_block(text: str) -> tuple[str, bool]:
     m = JOYDBMIX_BLOCK_RE.search(text)
     if not m:
         return text, False
-    return text[:m.start()] + WRAPPER_BLOCK + text[m.end():], True
+    rhs = extract_snac_active_rhs(text[m.start():m.end()])
+    return text[:m.start()] + _wrapper_with_snac_rhs(rhs) + text[m.end():], True
 
 
 # ---- Step 2: strip joydb_1/2 mux block ----
