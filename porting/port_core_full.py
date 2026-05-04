@@ -54,11 +54,8 @@ WRAPPER_BLOCK = """// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
 wire   [1:0] joy_type_raw    = status[127:126]; // 0=Off, 1=Saturn, 2=DB9MD, 3=DB15
 wire         joy_2p          = status[125];
-// SNAC priority: when SNAC is enabled, neutralize UserJoy/joydb path.
-// SNAC cores override the RHS of `snac_active` with their per-core SNAC enable
-// signal (e.g. raw_serial, snac, snacPort1|snacPort2). Default 1'b0 means
-// non-SNAC cores behave identically to before. The porter preserves a custom
-// RHS across re-runs (extract_snac_active_rhs).
+// SNAC cores: replace 1'b0 with the core's SNAC enable expression so SNAC
+// preempts the joydb wrapper on shared USER_IO pins. Default 1'b0 is no-op.
 wire         snac_active     = 1'b0;
 wire   [1:0] joy_type        = snac_active ? 2'd0 : joy_type_raw;
 wire         joy_db9md_en    = (joy_type == 2'd2);
@@ -142,13 +139,18 @@ SNAC_ACTIVE_DEFAULT_LINE_RE = re.compile(
 )
 
 
+# Verilog zero literals (case-insensitive base spec). The porter writes lowercase
+# `1'b0` but maintainers may type `1'B0`/`1'D0`/`1'H0` — treat all as "default".
+_VERILOG_ZERO_LITERALS = frozenset({"0", "1'b0", "1'd0", "1'h0"})
+
+
 def extract_snac_active_rhs(old_span: str) -> str | None:
     """Return non-default RHS of `wire snac_active = <rhs>;` in old_span, else None."""
     m = SNAC_ACTIVE_RE.search(old_span)
     if not m:
         return None
     rhs = m.group(1).strip()
-    if rhs in ("1'b0", "0", "1'd0", "1'h0"):
+    if rhs.lower() in _VERILOG_ZERO_LITERALS:
         return None
     return rhs
 
@@ -157,11 +159,15 @@ def _wrapper_with_snac_rhs(rhs: str | None) -> str:
     """Return WRAPPER_BLOCK with the `wire snac_active = ...;` RHS substituted."""
     if rhs is None:
         return WRAPPER_BLOCK
-    return SNAC_ACTIVE_DEFAULT_LINE_RE.sub(
+    block, n = SNAC_ACTIVE_DEFAULT_LINE_RE.subn(
         f"wire         snac_active     = {rhs};",
         WRAPPER_BLOCK,
         count=1,
     )
+    # Loud-fail rather than silently emit the default RHS if WRAPPER_BLOCK whitespace
+    # ever drifts past SNAC_ACTIVE_DEFAULT_LINE_RE.
+    assert n == 1, "SNAC_ACTIVE_DEFAULT_LINE_RE no longer matches WRAPPER_BLOCK"
+    return block
 
 
 def replace_joy_flag_block(text: str) -> tuple[str, bool]:
