@@ -21,6 +21,10 @@
 //                    button data lives in the analog response, retrievable
 //                    via the SMPC ID5/ANALOG handshake - use SNAC mode for
 //                    actual 3D Control Pad gameplay)
+//   MD_ID == 4'hA -> Saturn Stunner / Virtua Gun (HSS-0152) (detection only;
+//                    SENSOR/START/TRIG live on TH/TR/TL handshake lines that
+//                    this 4-phase helper does not poll - use SNAC mode with
+//                    "SNAC P1 Device,Stunner" for actual gun gameplay)
 // A 4-bit shift-register provides debounce: connect on 1 hit, disconnect
 // after 4 consecutive misses.
 // joystick format is active-high and keeps the common DB9 layout aligned:
@@ -68,6 +72,7 @@ wire d7_fall = (delay == 8'd0);
 
 localparam [3:0]  PAD_ID_DIGITAL = 4'hB;  // standard 6-button Saturn pad
 localparam [3:0]  PAD_ID_ANALOG  = 4'h5;  // 3D Control Pad in analog switch position
+localparam [3:0]  PAD_ID_STUNNER = 4'hA;  // Saturn Stunner / Virtua Gun (HSS-0152)
 localparam [13:0] IDLE_DATA      = 14'h3FFF;
 localparam [15:0] JOY_NONE       = 16'h0000;
 
@@ -112,7 +117,7 @@ reg joySplit = 1'b0;
 // sample and joySatScan[0..3] holds the {0,1} sample latched at GET_01.
 wire [3:0] md_id = {joy_in[3] | joy_in[2], joy_in[1] | joy_in[0],
                     joySatScan[0] | joySatScan[1], joySatScan[2] | joySatScan[3]};
-wire       pad_ok      = (md_id == PAD_ID_DIGITAL) | (md_id == PAD_ID_ANALOG);
+wire       pad_ok      = (md_id == PAD_ID_DIGITAL) | (md_id == PAD_ID_ANALOG) | (md_id == PAD_ID_STUNNER);
 // Pre-shift SR[2:0] covers the 3 samples before the current one; combined
 // with the new 0 about to be shifted in, this requires 4 consecutive misses.
 wire       pad_dropped = ~pad_ok & ~|joySatSr[cur_port][2:0] & joySatValid[cur_port];
@@ -169,12 +174,14 @@ always @(posedge clk) if (d7_fall) begin
         joySatDat[cur_port]   <= {1'b1, joy_in[3], joySatScan[13], joySatScan[10:0]};
         joySatValid[cur_port] <= 1'b1;
       end
-      else if (md_id == PAD_ID_ANALOG) begin
-        // 3D Control Pad in analog mode: digital button data requires the
-        // SMPC ID5/ANALOG serial handshake which this 4-phase helper cannot
-        // perform. Flag pad-present so Menu_MiSTer autodetect recognizes
+      else if ((md_id == PAD_ID_ANALOG) | (md_id == PAD_ID_STUNNER)) begin
+        // 3D Control Pad (analog mode) and Saturn Stunner both expose data
+        // on signals this 4-phase D-line helper does not poll: ID5/ANALOG
+        // serial handshake for the 3D Pad, TH/TR/TL handshake for the
+        // Stunner. Flag pad-present so Menu_MiSTer autodetect recognizes
         // Saturn and keep any previously-latched data; use SNAC mode
-        // (status[27]) for real 3D Pad gameplay with full analog.
+        // (status[27]) for real gameplay -- 3D Pad gets analog handshake,
+        // Stunner gets EXL_N to VDP2 via "SNAC P1 Device,Stunner".
         joySatValid[cur_port] <= 1'b1;
       end
       else if (pad_dropped) begin
