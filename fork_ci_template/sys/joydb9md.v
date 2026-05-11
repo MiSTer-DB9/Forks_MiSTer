@@ -115,10 +115,10 @@ always @(posedge clk) begin
 
             8'd6: begin
                 if (joy1_6btn == 1'b1) begin
-                    joyMDdat1[11:8] <= joy1_in[4:0]; // -- Mode, X, Y e Z
+                    joyMDdat1[11:8] <= joy1_in[3:0]; // -- Mode, X, Y e Z
                 end
                 if (joy2_6btn == 1'b1) begin
-                    joyMDdat2[11:8] <= joy2_in[4:0]; // -- Mode, X, Y e Z
+                    joyMDdat2[11:8] <= joy2_in[3:0]; // -- Mode, X, Y e Z
                 end
                 joyMDsel <= 1'b0;
 
