@@ -8,13 +8,15 @@ def sort_forks_ini_file(file_path):
     config.optionxform = str
     config.read(file_path)
 
-    # 1. Sort the internal list inside [Forks] -> SYNCING_FORKS
-    if config.has_option("Forks", "SYNCING_FORKS"):
-        raw_value = config.get("Forks", "SYNCING_FORKS")
-        # Split by whitespace, sort, and join back with a single space
-        forks_list = sorted(raw_value.split())
-        sorted_forks_string = " ".join(forks_list)
-        config.set("Forks", "SYNCING_FORKS", sorted_forks_string)
+    # 1. Sort every whitespace-separated fork list inside [Forks] (SYNCING_FORKS,
+    # UNSTABLE_FORKS, and any future *_FORKS channel).
+    if config.has_section("Forks"):
+        for key in config.options("Forks"):
+            if not key.endswith("_FORKS"):
+                continue
+            raw_value = config.get("Forks", key)
+            sorted_forks_string = " ".join(sorted(raw_value.split()))
+            config.set("Forks", key, sorted_forks_string)
 
     # 2. Organize Section Order
     other_sections = [s for s in config.sections() if s != "Forks"]

@@ -96,6 +96,20 @@ setup_cicd_on_fork() {
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         ${TEMP_DIR}/.github/workflows/push_release.yml
+    # [MiSTer-DB9 BEGIN] - unstable channel templating (mirrors sync_release sed pair)
+    sed -i \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+        -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        ${TEMP_DIR}/.github/unstable_release.sh
+    sed -i \
+        -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        ${TEMP_DIR}/.github/workflows/unstable_release.yml
+    # [MiSTer-DB9 END]
 
     DID_COMMIT=0
 
