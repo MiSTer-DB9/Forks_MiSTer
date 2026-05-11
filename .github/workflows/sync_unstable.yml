@@ -1,0 +1,32 @@
+name: Sync Unstable
+
+# [MiSTer-DB9 BEGIN] - poll upstream HEAD per fork in Forks[UNSTABLE_FORKS] and
+# dispatch sync_unstable when ahead of last_unstable_sha recorded in each
+# fork's "unstable-builds" release body. Twice daily by default; tighten once
+# v1 cost shape is observed.
+on:
+  schedule:
+    - cron: '0 6,18 * * *'
+  workflow_dispatch:
+  repository_dispatch:
+    types: [sync_unstable]
+
+concurrency:
+  group: sync_unstable
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Sync Unstable
+      run: ./.github/sync_unstable.sh
+      env:
+        DISPATCH_USER: theypsilon
+        DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        PARALLEL_JOBS: 16
+# [MiSTer-DB9 END]

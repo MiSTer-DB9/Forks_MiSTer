@@ -1,0 +1,68 @@
+name: Unstable Release
+
+# [MiSTer-DB9 BEGIN] - unstable channel: build upstream HEAD on each tick, ship
+# to "unstable-builds" prerelease assets (last 7 retained for rollback).
+# Hard-serialized per fork: prune-after-upload would race otherwise.
+concurrency:
+  group: unstable-${{ github.repository }}
+  cancel-in-progress: true
+
+on:
+  repository_dispatch:
+    types: [sync_unstable]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # gh release create / upload / delete-asset
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false   # this is too slow, just skip
+        docker-images: true
+        swap-storage: true
+
+    - uses: actions/checkout@v6
+      with:
+        # We checkout the fork's main branch only as a starting point for
+        # remotes; unstable_release.sh resets to upstream/HEAD before building.
+        fetch-depth: 0
+
+    - name: Resolve Quartus image
+      id: image
+      run: |
+        first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
+        image=$(./.github/detect_quartus_image.sh "${first_input}")
+        echo "image=${image}" >> "$GITHUB_OUTPUT"
+        echo "Resolved Quartus image: ${image}"
+      env:
+        QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
+
+    - name: Cache Docker image
+      uses: actions/cache@v5
+      with:
+        path: /tmp/docker-image.tar
+        key: docker-${{ steps.image.outputs.image }}
+
+    - name: Build unstable RBF from upstream HEAD
+      run: ./.github/unstable_release.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
+        # unstable_release.sh materialises sys/db9_key_secret.vh from this env
+        # var before Quartus compile (identical handling to sync_release.yml).
+        # 64 hex chars = 32 bytes. KEEP THIS SECRET.
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # [MiSTer-DB9-Pro END]
+# [MiSTer-DB9 END]
