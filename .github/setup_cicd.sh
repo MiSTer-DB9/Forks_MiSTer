@@ -16,6 +16,9 @@ setup_cicd_on_fork() {
     local COMPILATION_INPUT="$6"
     local COMPILATION_OUTPUT="$7"
     local MAINTAINER_EMAILS="$8"
+    # [MiSTer-DB9 BEGIN] - 1 = v2 channel, 0 = legacy push_release.
+    local RELEASE_V2_MODE="${9:-0}"
+    # [MiSTer-DB9 END]
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -78,6 +81,7 @@ setup_cicd_on_fork() {
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        -e "s%<<RELEASE_V2_MODE>>%${RELEASE_V2_MODE}%g" \
         ${TEMP_DIR}/.github/sync_release.sh
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
@@ -109,6 +113,30 @@ setup_cicd_on_fork() {
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         ${TEMP_DIR}/.github/workflows/unstable_release.yml
+    # [MiSTer-DB9 END]
+
+    # [MiSTer-DB9 BEGIN] - v2 channel: swap push_release for release_v2 templates.
+    if [[ "${RELEASE_V2_MODE}" == "1" ]]; then
+        sed -i \
+            -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+            -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+            -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+            ${TEMP_DIR}/.github/release_v2.sh
+        sed -i \
+            -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+            -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+            -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+            ${TEMP_DIR}/.github/workflows/release_v2.yml
+        rm -f \
+            ${TEMP_DIR}/.github/push_release.sh \
+            ${TEMP_DIR}/.github/workflows/push_release.yml
+    else
+        rm -f \
+            ${TEMP_DIR}/.github/release_v2.sh \
+            ${TEMP_DIR}/.github/workflows/release_v2.yml
+    fi
     # [MiSTer-DB9 END]
 
     DID_COMMIT=0
@@ -196,6 +224,15 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     _RELEASE_CORE_NAMES=""
     _COMPILATION_INPUTS=""
     _COMPILATION_OUTPUTS=""
+    # [MiSTer-DB9 BEGIN] - multi-core groups move together as v2 or legacy.
+    _RELEASE_V2_MODE=0
+    for _fn in "${_group[@]}"; do
+        if [[ " ${Forks[release_v2_forks]:-} " == *" ${_fn} "* ]]; then
+            _RELEASE_V2_MODE=1
+            break
+        fi
+    done
+    # [MiSTer-DB9 END]
     for _fn in "${_group[@]}"; do
         declare -n _fd="$_fn"
         _RELEASE_CORE_NAMES="${_RELEASE_CORE_NAMES:+${_RELEASE_CORE_NAMES} }${_fd[release_core_name]}"
@@ -204,7 +241,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -212,7 +249,8 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_QUARTUS_IMAGE" \
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
-        "$_MAINTAINER_EMAILS"
+        "$_MAINTAINER_EMAILS" \
+        "$_RELEASE_V2_MODE"
 done > "${RESULTS_DIR}/groups.nul"
 
 export -f setup_cicd_on_fork retry
@@ -220,14 +258,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 8 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 9 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
-            echo "Setting up CI/CD for $3 (cores: $1)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"; then
+            echo "Setting up CI/CD for $3 (cores: $1, release_v2=$9)..."
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"; then
                 rc=0
             else
                 rc=$?
