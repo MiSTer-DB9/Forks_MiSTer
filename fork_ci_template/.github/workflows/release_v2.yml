@@ -1,0 +1,69 @@
+name: Release v2
+
+# [MiSTer-DB9 BEGIN] - stable channel: build fork HEAD, upload to stable-builds.
+# Per-branch concurrency key so multi-variant repos build siblings in parallel.
+concurrency:
+  group: release-v2-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - <<MAIN_BRANCH>>
+  workflow_dispatch:
+    inputs:
+      forced:
+        description: "Bypass source-hash skip + BOT-commit skip"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write   # gh release create / upload / delete-asset
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false   # this is too slow, just skip
+        docker-images: true
+        swap-storage: true
+
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+
+    - name: Resolve Quartus image
+      id: image
+      run: |
+        first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
+        image=$(./.github/detect_quartus_image.sh "${first_input}")
+        echo "image=${image}" >> "$GITHUB_OUTPUT"
+        echo "Resolved Quartus image: ${image}"
+      env:
+        QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
+
+    - name: Cache Docker image
+      uses: actions/cache@v5
+      with:
+        path: /tmp/docker-image.tar
+        key: docker-${{ steps.image.outputs.image }}
+
+    - name: Build stable RBF from fork HEAD
+      run: ./.github/release_v2.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCED: ${{ github.event.inputs.forced }}
+        # [MiSTer-DB9-Pro BEGIN] - 64 hex chars = 32 bytes. KEEP SECRET.
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # [MiSTer-DB9-Pro END]
+# [MiSTer-DB9 END]
