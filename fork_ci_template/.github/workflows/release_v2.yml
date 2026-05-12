@@ -1,7 +1,10 @@
 name: Release v2
 
-# [MiSTer-DB9 BEGIN] - stable channel: build fork HEAD, upload to stable-builds.
-# Per-branch concurrency key so multi-variant repos build siblings in parallel.
+# [MiSTer-DB9 BEGIN] - stable channel: build fork HEAD, publish to a per-commit
+# immutable tag `stable/<MAIN_BRANCH>/<YYYYMMDD>-<sha7>` with one GitHub Release
+# on top. Distribution picks the newest per variant via /releases?per_page=N
+# filtered by tag prefix. Per-branch concurrency key so multi-variant repos
+# build siblings in parallel.
 concurrency:
   group: release-v2-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true

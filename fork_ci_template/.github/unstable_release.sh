@@ -29,6 +29,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/retry.sh"
 # shellcheck source=rerere_train.sh
 source "${SCRIPT_DIR}/rerere_train.sh"
+# shellcheck source=compute_source_hash.sh
+source "${SCRIPT_DIR}/compute_source_hash.sh"
 
 UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
@@ -44,11 +46,7 @@ UNSTABLE_TAG="unstable-builds"
 # variant or the second dispatch clobbers the first's merge state.
 UNSTABLE_BRANCH="unstable/${MAIN_BRANCH}"
 RETENTION=7
-HDL_GLOBS=(
-    '*.v' '*.sv' '*.vhd' '*.vhdl'
-    '*.qsf' '*.qip' '*.qpf' '*.sdc'
-    '*.tcl' '*.mif' '*.hex'
-)
+# HDL_GLOBS + compute_source_hash come from compute_source_hash.sh.
 
 # Emit the merged release body with this variant's stanza updated. Multi-
 # branch forks (GBA: master / GBA2P / accuracy, X68000: master / USERIO2,
@@ -245,23 +243,6 @@ if ! command -v gh >/dev/null 2>&1; then
     echo "::error::gh CLI missing — cannot reach unstable-builds release"
     exit 1
 fi
-
-# Source-hash filter: only .v / .sv / .vhd / .vhdl / .qsf / .qip / .qpf / .sdc
-# / .tcl / .mif / .hex contribute. Excludes .git, releases (stable RBFs),
-# output_files (Quartus artifacts).
-compute_source_hash() {
-    # -prune skips the .git tree entirely; -not -path filters AFTER descending it.
-    # Path-sorted so adds/removes/renames change the digest.
-    find . \( -path ./.git -o -path ./releases -o -path ./output_files \) -prune \
-        -o -type f \( \
-            -name '*.v'    -o -name '*.sv'   -o -name '*.vhd'  -o -name '*.vhdl' \
-         -o -name '*.qsf'  -o -name '*.qip'  -o -name '*.qpf'  -o -name '*.sdc' \
-         -o -name '*.tcl'  -o -name '*.mif'  -o -name '*.hex' \
-         \) -print0 \
-        | LC_ALL=C sort -z \
-        | xargs -0 sha256sum \
-        | sha256sum | awk '{print $1}'
-}
 
 CURRENT_SOURCE_HASH=$(compute_source_hash)
 echo "Source hash: ${CURRENT_SOURCE_HASH}"
