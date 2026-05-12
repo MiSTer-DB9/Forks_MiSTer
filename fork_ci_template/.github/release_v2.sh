@@ -37,8 +37,8 @@ fi
 # [MiSTer-DB9 END]
 
 # Source-hash skip catches these too, but exit early to dodge the gh round trips.
-read -r LAST_AUTHOR < <(git log -n 1 --pretty=format:%an)
-read -r LAST_SUBJECT < <(git log -n 1 --pretty=format:%s)
+LAST_AUTHOR=$(git log -n 1 --pretty=format:%an)
+LAST_SUBJECT=$(git log -n 1 --pretty=format:%s)
 if [[ "${FORCED:-false}" != "true" && "${LAST_AUTHOR}" == "The CI/CD Bot" ]] && \
    [[ "${LAST_SUBJECT}" == "BOT: Fork CI/CD setup changes." || \
       "${LAST_SUBJECT}" == "BOT: Merging upstream, no core released." ]] ; then
