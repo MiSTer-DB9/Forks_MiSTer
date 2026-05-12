@@ -39,7 +39,10 @@ QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workf
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
 
 UNSTABLE_TAG="unstable-builds"
-UNSTABLE_BRANCH="unstable"
+# Per-variant ref name: multi-branch forks (GBA: master / GBA2P / accuracy,
+# X68000: master / SECOND_MT32, …) need a distinct `unstable` head per
+# variant or the second dispatch clobbers the first's merge state.
+UNSTABLE_BRANCH="unstable/${MAIN_BRANCH}"
 RETENTION=7
 HDL_GLOBS=(
     '*.v' '*.sv' '*.vhd' '*.vhdl'
@@ -47,18 +50,64 @@ HDL_GLOBS=(
     '*.tcl' '*.mif' '*.hex'
 )
 
-# Emit a release-body string. Same shape from both the pre-check skip path
-# and the post-build success path so they cannot drift apart.
+# Emit the merged release body with this variant's stanza updated. Multi-
+# branch forks (GBA: master / GBA2P / accuracy, X68000: master / USERIO2,
+# …) share one `unstable-builds` GitHub Release, so the body is laid out
+# as one `[${MAIN_BRANCH}]` stanza per variant. Read-modify-write: fetch
+# the current body, replace this variant's stanza in place (preserving
+# encounter order), append a new stanza if absent, leave sibling
+# variants' stanzas untouched. Same shape from both the pre-check skip
+# path and the post-build success path so they cannot drift apart.
 write_release_body() {
     local upstream_sha="$1" master_sha="$2" branch_sha="$3" ts="$4"
-    cat <<EOF
-Per-core unstable RBFs built off upstream HEAD. Last ${RETENTION} retained per filename pattern.
-
-last_unstable_sha:        ${upstream_sha}
-last_unstable_master_sha: ${master_sha}
-last_unstable_branch_sha: ${branch_sha}
-last_unstable_ts:         ${ts}
-EOF
+    local existing_body
+    existing_body=$(gh release view "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body' 2>/dev/null || echo "")
+    UPSTREAM_SHA="${upstream_sha}" \
+    MASTER_SHA="${master_sha}" \
+    BRANCH_SHA="${branch_sha}" \
+    TS="${ts}" \
+    MAIN_BRANCH="${MAIN_BRANCH}" \
+    RETENTION="${RETENTION}" \
+    EXISTING_BODY="${existing_body}" \
+    python3 - <<'PY'
+import os, re, sys
+branch = os.environ["MAIN_BRANCH"]
+header = f"Per-core unstable RBFs built off upstream HEAD. Last {os.environ['RETENTION']} retained per filename pattern."
+new_stanza = (
+    f"last_unstable_sha:        {os.environ['UPSTREAM_SHA']}\n"
+    f"last_unstable_master_sha: {os.environ['MASTER_SHA']}\n"
+    f"last_unstable_branch_sha: {os.environ['BRANCH_SHA']}\n"
+    f"last_unstable_ts:         {os.environ['TS']}"
+)
+stanzas = {}
+order = []
+current = None
+buf = []
+for line in os.environ.get("EXISTING_BODY", "").splitlines():
+    m = re.match(r"^\[([^\]]+)\]\s*$", line)
+    if m:
+        if current is not None:
+            stanzas[current] = "\n".join(buf).rstrip()
+            if current not in order:
+                order.append(current)
+        current = m.group(1)
+        buf = []
+    elif current is not None:
+        buf.append(line)
+if current is not None:
+    stanzas[current] = "\n".join(buf).rstrip()
+    if current not in order:
+        order.append(current)
+if branch not in order:
+    order.append(branch)
+stanzas[branch] = new_stanza
+out = [header, ""]
+for b in order:
+    out.append(f"[{b}]")
+    out.append(stanzas[b])
+    out.append("")
+sys.stdout.write("\n".join(out).rstrip() + "\n")
+PY
 }
 
 # Fork-only cores have no upstream HEAD to follow — silently no-op.
@@ -126,12 +175,19 @@ LAST_UPSTREAM_SHA=""
 LAST_MASTER_SHA=""
 LAST_BRANCH_SHA=""
 if [[ -n "${RELEASE_JSON}" ]]; then
-    read -r LAST_UPSTREAM_SHA LAST_MASTER_SHA LAST_BRANCH_SHA < <(printf '%s' "${RELEASE_JSON}" | python3 -c '
-import json, sys, re
+    read -r LAST_UPSTREAM_SHA LAST_MASTER_SHA LAST_BRANCH_SHA < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
+import json, sys, os, re
 body = json.load(sys.stdin).get("body", "")
+branch = os.environ["MAIN_BRANCH"]
+# Extract the stanza for this variant: starts at "[<branch>]" line, ends
+# at the next "[…]" header (or EOF). Multi-branch forks (GBA, X68000)
+# share one release body with one stanza per variant; siblings ignored.
+pat = re.compile(rf"\[{re.escape(branch)}\]\s*\n(.*?)(?=\n\[|\Z)", re.DOTALL)
+m = pat.search(body)
+stanza = m.group(1) if m else ""
 def find(key):
-    m = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", body)
-    return m.group(1) if m else ""
+    mm = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", stanza)
+    return mm.group(1) if mm else ""
 print(find("last_unstable_sha"), find("last_unstable_master_sha"), find("last_unstable_branch_sha"))
 ')
 fi

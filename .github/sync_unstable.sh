@@ -37,23 +37,27 @@ check_and_dispatch() {
         return 1
     fi
 
-    # Pull last_unstable_sha + last_failed_sha from the fork's unstable-builds
-    # release body in a single API call + single Python parse.
+    # Pull last_unstable_sha + last_failed_sha from this variant's
+    # `[${MAIN_BRANCH}]` stanza — multi-branch forks share one release body.
     local RELEASE_JSON LAST_SHA LAST_FAILED_SHA
     RELEASE_JSON=$(curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${OWNER}/${NAME}/releases/tags/${UNSTABLE_TAG}" 2>/dev/null || echo "")
     if [[ -n "${RELEASE_JSON}" ]]; then
-        { read -r LAST_SHA; read -r LAST_FAILED_SHA; } < <(printf '%s' "${RELEASE_JSON}" | python3 -c '
-import json, sys, re
+        { read -r LAST_SHA; read -r LAST_FAILED_SHA; } < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
+import json, sys, os, re
 try:
     body = json.load(sys.stdin).get("body","")
 except Exception:
     print(); print(); sys.exit(0)
+branch = os.environ["MAIN_BRANCH"]
+pat = re.compile(rf"\[{re.escape(branch)}\]\s*\n(.*?)(?=\n\[|\Z)", re.DOTALL)
+m = pat.search(body)
+stanza = m.group(1) if m else ""
 for key in ("last_unstable_sha", "last_failed_sha"):
-    m = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", body)
-    print(m.group(1) if m else "")
+    mm = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", stanza)
+    print(mm.group(1) if mm else "")
 ')
     fi
     LAST_SHA="${LAST_SHA:-}"
