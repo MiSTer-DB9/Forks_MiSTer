@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/retry.sh"
 
 UNSTABLE_TAG="unstable-builds"
+export UNSTABLE_TAG   # xargs subshells need this; set -u trips otherwise
 
 check_and_dispatch() {
     local fork_name="$1"
@@ -28,7 +29,6 @@ check_and_dispatch() {
     fi
     local OWNER="${BASH_REMATCH[3]}"
     local NAME="${BASH_REMATCH[4]}"
-    local FORK_DISPATCH_URL="https://api.github.com/repos/${OWNER}/${NAME}/dispatches"
 
     local UPSTREAM_HEAD
     UPSTREAM_HEAD=$(retry -- git ls-remote "${UPSTREAM_REPO}" "refs/heads/${MAIN_BRANCH}" | awk '{print $1}')
@@ -69,14 +69,18 @@ for key in ("last_unstable_sha", "last_failed_sha"):
         return 0
     fi
 
-    echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} != last ${LAST_SHA:0:7} — dispatching sync_unstable"
+    # workflow_dispatch with explicit ref: repository_dispatch only fires on
+    # the repo's default branch, which would silently drop variant branches
+    # (e.g. GBA2P_DB9 lives on GBA_MiSTer's GBA2P branch, not master).
+    echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} != last ${LAST_SHA:0:7} — dispatching unstable_release.yml on ${MAIN_BRANCH}"
+    local WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${OWNER}/${NAME}/actions/workflows/unstable_release.yml/dispatches"
     retry -- curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
         --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
         -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "Content-Type: application/json" \
-        --data '{"event_type":"sync_unstable"}' \
-        "${FORK_DISPATCH_URL}"
+        --data "{\"ref\":\"${MAIN_BRANCH}\"}" \
+        "${WORKFLOW_DISPATCH_URL}"
 }
 
 source <(cat Forks.ini | python3 -c "

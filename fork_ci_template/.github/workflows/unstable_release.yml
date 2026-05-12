@@ -2,14 +2,14 @@ name: Unstable Release
 
 # [MiSTer-DB9 BEGIN] - unstable channel: build upstream HEAD on each tick, ship
 # to "unstable-builds" prerelease assets (last 7 retained for rollback).
-# Hard-serialized per fork: prune-after-upload would race otherwise.
+# Concurrency keyed per-branch so multi-variant repos (GBA: master/GBA2P/
+# accuracy) build their variants in parallel without cancelling each other,
+# while back-to-back triggers of the same variant still get serialized.
 concurrency:
-  group: unstable-${{ github.repository }}
+  group: unstable-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
-  repository_dispatch:
-    types: [sync_unstable]
   workflow_dispatch:
 
 permissions:
