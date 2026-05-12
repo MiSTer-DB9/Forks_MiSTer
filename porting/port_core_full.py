@@ -369,7 +369,12 @@ def update_conf_str(text: str, is_1p: bool = False) -> tuple[str, bool]:
     # (MiSTer convention: P<n> + optional flags). Captured to preserve.
     pfx = r'(?P<pfx>P[0-9][A-Za-z]?)?'
 
-    # Try (a) modern O[127:126] form (already wrapped in markers maybe).
+    # Try (a) modern O[127:126] form. Two sub-cases:
+    #   (a1) already wrapped in [MiSTer-DB9-Pro BEGIN/END] — just canonicalize
+    #        the joystick string in place (idempotent re-run).
+    #   (a2) bracket-form joystick line landed without markers (early hand-
+    #        ports of GBA/C128/PSX) — wrap the joystick line + adjacent fork
+    #        Players line (if present) in [MiSTer-DB9-Pro BEGIN/END].
     a_re = re.compile(
         r'"' + pfx.replace('?P<pfx>', '?P<pfxA>')
         + r'O\[127:126\],UserIO Joystick,Off,(?:DB9MD,DB15|DB15,DB9MD|DB15,DB9)[ \t]*;"'
@@ -377,13 +382,59 @@ def update_conf_str(text: str, is_1p: bool = False) -> tuple[str, bool]:
     m = a_re.search(text)
     if m:
         prefix = m.group('pfxA') or ''
-        text = (
-            text[:m.start()]
-            + f'"{prefix}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;"'
-            + text[m.end():]
+        # Locate the full joystick source line (indent → trailing newline).
+        line_start = text.rfind('\n', 0, m.start()) + 1
+        line_end_nl = text.find('\n', m.end())
+        if line_end_nl == -1:
+            line_end_nl = len(text)
+        indent_m = re.match(r'[ \t]*', text[line_start:m.start()])
+        indent = indent_m.group(0) if indent_m else ''
+        # Already wrapped if the closest non-empty preceding line carries the
+        # Pro BEGIN marker.
+        prev_lines = [ln for ln in text[:line_start].splitlines() if ln.strip()]
+        already_marked = bool(prev_lines and '[MiSTer-DB9-Pro BEGIN]' in prev_lines[-1])
+        new_joy_quoted = f'"{prefix}O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;"'
+
+        if already_marked:
+            text = text[:m.start()] + new_joy_quoted + text[m.end():]
+            if is_1p:
+                text = strip_players_line(text)
+            return text, True
+
+        # Unmarked bracket-form: wrap joystick line + adjacent fork Players line.
+        after = text[line_end_nl + 1:]
+        ply_m = re.match(
+            r'(?P<indent>[ \t]*)"(?P<pfxP>P[0-9][A-Za-z]?)?O\[125\],'
+            r'UserIO Players,[ \t]*1 Player,2 Players[ \t]*;",[ \t]*\n',
+            after,
         )
         if is_1p:
+            block = (
+                f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation; 1P-only)\n'
+                f'{indent}{new_joy_quoted},\n'
+                f'{indent}// [MiSTer-DB9-Pro END]\n'
+            )
+            text = text[:line_start] + block + text[line_end_nl + 1:]
             text = strip_players_line(text)
+            return text, True
+        if ply_m:
+            ply_prefix = ply_m.group('pfxP') or ''
+            block = (
+                f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type + 1P/2P selector\n'
+                f'{indent}{new_joy_quoted},\n'
+                f'{indent}"{ply_prefix}O[125],UserIO Players, 1 Player,2 Players;",\n'
+                f'{indent}// [MiSTer-DB9-Pro END]\n'
+            )
+            ply_end = line_end_nl + 1 + ply_m.end()
+            text = text[:line_start] + block + text[ply_end:]
+            return text, True
+        # 2P core but Players line missing — wrap joystick only.
+        block = (
+            f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn-first joy_type (canonical bit notation)\n'
+            f'{indent}{new_joy_quoted},\n'
+            f'{indent}// [MiSTer-DB9-Pro END]\n'
+        )
+        text = text[:line_start] + block + text[line_end_nl + 1:]
         return text, True
 
     # (b) Legacy letter-encoded form (any OXY/oXY for joystick, any OX/oX for
