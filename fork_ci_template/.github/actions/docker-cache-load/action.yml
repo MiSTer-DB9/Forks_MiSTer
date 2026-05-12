@@ -1,0 +1,48 @@
+name: Docker image cache + load
+description: >
+  Restore the Quartus Docker image tar from GH cache, load it into the runner's
+  daemon, then delete the tar before the build starts so Quartus has the ~3 GB
+  of /tmp back. On cache miss, pull + docker save + cache save + delete.
+
+inputs:
+  image:
+    description: Quartus image ref (also used as cache key suffix)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Docker image cache
+      id: docker_cache
+      uses: actions/cache/restore@v5
+      with:
+        path: /tmp/docker-image.tar
+        key: docker-${{ inputs.image }}
+
+    - name: Load or pull Quartus image
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${CACHE_HIT}" = "true" ]; then
+            docker load -i /tmp/docker-image.tar
+            rm -f /tmp/docker-image.tar
+        else
+            source ./.github/retry.sh
+            retry -- docker pull "${QUARTUS_IMAGE}"
+            docker save "${QUARTUS_IMAGE}" -o /tmp/docker-image.tar
+        fi
+      env:
+        CACHE_HIT: ${{ steps.docker_cache.outputs.cache-hit }}
+        QUARTUS_IMAGE: ${{ inputs.image }}
+
+    - name: Save Docker image cache
+      if: steps.docker_cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: /tmp/docker-image.tar
+        key: docker-${{ inputs.image }}
+
+    - name: Free Quartus tar from /tmp
+      if: steps.docker_cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: rm -f /tmp/docker-image.tar

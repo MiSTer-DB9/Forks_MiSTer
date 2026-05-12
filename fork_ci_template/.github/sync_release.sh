@@ -132,16 +132,6 @@ fi
 # [MiSTer-DB9-Pro END]
 
 if [[ "${NEED_REBUILD}" == "true" ]] ; then
-    if ! docker image inspect "${QUARTUS_IMAGE}" >/dev/null 2>&1; then
-        echo "Loading or pulling Docker image ${QUARTUS_IMAGE}..."
-        if [ -f /tmp/docker-image.tar ]; then
-            docker load -i /tmp/docker-image.tar
-        else
-            retry -- docker pull "${QUARTUS_IMAGE}"
-            docker save "${QUARTUS_IMAGE}" -o /tmp/docker-image.tar
-        fi
-    fi
-
     RELEASE_FILES_LIST=()
     for i in "${!CORE_NAME[@]}"; do
         if [[ -n "${UPSTREAM_CORE_FILES[i]}" ]]; then
