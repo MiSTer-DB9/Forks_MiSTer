@@ -250,17 +250,14 @@ fi
 # / .tcl / .mif / .hex contribute. Excludes .git, releases (stable RBFs),
 # output_files (Quartus artifacts).
 compute_source_hash() {
-    # NUL-separated find + xargs batched sha256sum (single process per batch,
-    # not per file). Path-sorted so adds/removes/renames change the digest.
-    find . -type f \( \
+    # -prune skips the .git tree entirely; -not -path filters AFTER descending it.
+    # Path-sorted so adds/removes/renames change the digest.
+    find . \( -path ./.git -o -path ./releases -o -path ./output_files \) -prune \
+        -o -type f \( \
             -name '*.v'    -o -name '*.sv'   -o -name '*.vhd'  -o -name '*.vhdl' \
          -o -name '*.qsf'  -o -name '*.qip'  -o -name '*.qpf'  -o -name '*.sdc' \
          -o -name '*.tcl'  -o -name '*.mif'  -o -name '*.hex' \
-         \) \
-        -not -path './.git/*' \
-        -not -path './releases/*' \
-        -not -path './output_files/*' \
-        -print0 \
+         \) -print0 \
         | LC_ALL=C sort -z \
         | xargs -0 sha256sum \
         | sha256sum | awk '{print $1}'
