@@ -88,10 +88,12 @@ fi
 git checkout -qf "${MAIN_BRANCH}"
 MASTER_SHA=$(git rev-parse HEAD)
 
-# actions/checkout@v6 with fetch-depth: 0 already populates origin/unstable
-# if it exists, so we just check + branch directly. Bootstrap from MAIN_BRANCH
-# on first run; master is never written here, stable invariant preserved.
-if git rev-parse --verify "refs/remotes/origin/${UNSTABLE_BRANCH}" >/dev/null 2>&1; then
+# Probe the remote (not the local clone — actions/checkout@v6's fetch-depth:0
+# brings full history of the checked-out ref only, NOT every remote branch).
+# Bootstrap from MAIN_BRANCH on first run; master is never written here, so
+# the stable invariant (master pinned to last-released upstream commit) holds.
+if git ls-remote --exit-code origin "refs/heads/${UNSTABLE_BRANCH}" >/dev/null 2>&1; then
+    retry -- git fetch --no-tags origin "refs/heads/${UNSTABLE_BRANCH}:refs/remotes/origin/${UNSTABLE_BRANCH}"
     git checkout -B "${UNSTABLE_BRANCH}" "origin/${UNSTABLE_BRANCH}"
 else
     echo "No origin/${UNSTABLE_BRANCH} yet — bootstrapping from ${MAIN_BRANCH}."
