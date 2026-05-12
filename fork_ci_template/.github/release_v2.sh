@@ -35,16 +35,6 @@ if [[ -z "${SATURN_HIT}" ]]; then
 fi
 # [MiSTer-DB9 END]
 
-# Source-hash skip catches these too, but exit early to dodge the gh round trips.
-LAST_AUTHOR=$(git log -n 1 --pretty=format:%an)
-LAST_SUBJECT=$(git log -n 1 --pretty=format:%s)
-if [[ "${FORCED:-false}" != "true" && "${LAST_AUTHOR}" == "The CI/CD Bot" ]] && \
-   [[ "${LAST_SUBJECT}" == "BOT: Fork CI/CD setup changes." || \
-      "${LAST_SUBJECT}" == "BOT: Merging upstream, no core released." ]] ; then
-    echo "Last commit is a pure BOT bookkeeping push — nothing to ship."
-    exit 0
-fi
-
 export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
