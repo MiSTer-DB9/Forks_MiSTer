@@ -18,7 +18,8 @@ on:
       forced:
         description: "Bypass source-hash skip + BOT-commit skip"
         required: false
-        default: "false"
+        default: false
+        type: boolean
 
 permissions:
   contents: write   # gh release create / upload / delete-asset
