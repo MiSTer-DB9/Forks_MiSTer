@@ -14,17 +14,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@main
-      with:
-        tool-cache: true
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false   # this is too slow, just skip
-        docker-images: true
-        swap-storage: true
-
     - uses: actions/checkout@v6
 
     - name: Resolve Quartus image
@@ -37,11 +26,10 @@ jobs:
       env:
         QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
 
-    - name: Cache Docker image
-      uses: actions/cache@v5
+    - name: Cache & load Quartus image
+      uses: ./.github/actions/docker-cache-load
       with:
-        path: /tmp/docker-image.tar
-        key: docker-${{ steps.image.outputs.image }}
+        image: ${{ steps.image.outputs.image }}
 
     - name: Sync with upstream + Release
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
