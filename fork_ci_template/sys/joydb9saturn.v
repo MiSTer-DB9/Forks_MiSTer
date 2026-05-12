@@ -23,9 +23,8 @@
 //                    actual 3D Control Pad gameplay)
 //   MD_ID == 4'hA -> Saturn Stunner / Virtua Gun (HSS-0152) (detection only;
 //                    SENSOR/START/TRIG live on TH/TR/TL handshake lines that
-//                    this 4-phase helper does not poll - use SNAC mode
-//                    (status[27]) for actual gun gameplay; Stunner is
-//                    auto-detected by SMPC's PS_NOTHING_STUNNER state)
+//                    this 4-phase helper does not poll - use SNAC mode with
+//                    "SNAC P1 Device,Stunner" for actual gun gameplay)
 // A 4-bit shift-register provides debounce: connect on 1 hit, disconnect
 // after 4 consecutive misses.
 // joystick format is active-high and keeps the common DB9 layout aligned:
@@ -182,7 +181,7 @@ always @(posedge clk) if (d7_fall) begin
         // Stunner. Flag pad-present so Menu_MiSTer autodetect recognizes
         // Saturn and keep any previously-latched data; use SNAC mode
         // (status[27]) for real gameplay -- 3D Pad gets analog handshake,
-        // Stunner gets EXL_N to VDP2 (both auto-detected by SMPC).
+        // Stunner gets EXL_N to VDP2 via "SNAC P1 Device,Stunner".
         joySatValid[cur_port] <= 1'b1;
       end
       else if (pad_dropped) begin
