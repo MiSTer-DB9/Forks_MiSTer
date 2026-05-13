@@ -26,6 +26,7 @@ sync_fork() {
     local UPSTREAM_REPO="${fork[upstream_repo]:-}"
     local FORK_REPO="${fork[fork_repo]}"
     local MAIN_BRANCH="${fork[main_branch]}"
+    local UPSTREAM_BRANCH="${fork[upstream_branch]:-${MAIN_BRANCH}}"
 
     if [[ -z "${UPSTREAM_REPO}" ]]; then
         echo "Skipping ${1} — fork-only core (no UPSTREAM_REPO)."
@@ -47,10 +48,10 @@ sync_fork() {
         git init > /dev/null 2>&1
 
         echo
-        echo "Fetching upstream (${MAIN_BRANCH}):"
+        echo "Fetching upstream (${UPSTREAM_BRANCH}):"
         git remote add upstream ${UPSTREAM_REPO}
         retry -- git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules upstream
-        git checkout -qf remotes/upstream/${MAIN_BRANCH}
+        git checkout -qf remotes/upstream/${UPSTREAM_BRANCH}
         local LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
         echo
         echo "Found latest release: ${LAST_UPSTREAM_RELEASE}"
