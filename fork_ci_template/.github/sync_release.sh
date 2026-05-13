@@ -30,7 +30,7 @@ git remote add upstream "${UPSTREAM_REPO}"
 retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
 git checkout -qf "remotes/upstream/${MAIN_BRANCH}"
 
-NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
+NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
 COMMIT_TO_MERGE=$(git log -n 1 --pretty=format:%H -- "releases/${NEW_RELEASE_FILE}")
 
 UPSTREAM_CORE_FILES=()
