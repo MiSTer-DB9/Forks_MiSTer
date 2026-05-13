@@ -33,7 +33,15 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Pre-flight skip check
+      id: preflight
+      run: ./.github/preflight_skip.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCED: ${{ github.event.inputs.forced }}
+
     - name: Resolve Quartus image
+      if: steps.preflight.outputs.skip != 'true'
       id: image
       run: |
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
@@ -44,11 +52,13 @@ jobs:
         QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
 
     - name: Cache & load Quartus image
+      if: steps.preflight.outputs.skip != 'true'
       uses: ./.github/actions/docker-cache-load
       with:
         image: ${{ steps.image.outputs.image }}
 
     - name: Build stable RBF from fork HEAD
+      if: steps.preflight.outputs.skip != 'true'
       run: ./.github/release_v2.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}

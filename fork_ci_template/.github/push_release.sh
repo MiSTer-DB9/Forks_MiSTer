@@ -6,31 +6,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=retry.sh
 source "${SCRIPT_DIR}/retry.sh"
+# shellcheck source=pristine_upstream_tripwire.sh
+source "${SCRIPT_DIR}/pristine_upstream_tripwire.sh"
 
-# [MiSTer-DB9 BEGIN] - skip build on pristine-upstream forks (not yet DB9-ported).
-# Mirrors the joydb9saturn.v tripwire used by .github/setup_cicd.sh in the
-# orchestrator repo. Without this guard, the first push to a freshly-cloned
-# fork (the BOT setup commit) walks all-history at the per-commit rebuild
-# scan below, finds upstream human commits, and runs Quartus on un-ported
-# HDL — emitting a stock-upstream .rbf into releases/.
-# Truth source: presence of joydb9saturn.v under any */sys/ within depth 4
-# (canonical per porting/STATUS.md, works for both hps_io.sv and
-# pre-SV-rename hps_io.v cores; depth-limited find handles non-standard
-# layouts like Arcade-Cave's quartus/sys/). Fork-only repos with a sys/
-# tree but no DB9 port (and Main_DB9 with no sys/ tree at all) fall
-# through the same test.
-SATURN_HIT=$(find . -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
-if [[ -z "${SATURN_HIT}" ]]; then
-    # Saturn-hit miss is ambiguous: pristine upstream (skip) vs. fork-only with no
-    # sys/ tree at all (Main_DB9 — fall through and build). Disambiguate via a
-    # second find only when needed, so the hot path (ported forks) walks once.
-    ANY_SYS=$(find . -maxdepth 4 -type d -name sys -print -quit 2>/dev/null)
-    if [[ -n "${ANY_SYS}" ]]; then
-        echo "Fork is pristine upstream (no */sys/joydb9saturn.v within depth 4). Run apply_db9_framework.sh before enabling builds. Skipping."
-        exit 0
-    fi
+# Without this guard, the first push to a freshly-cloned fork (the BOT setup
+# commit) walks all-history at the per-commit rebuild scan below, finds
+# upstream human commits, and runs Quartus on un-ported HDL — emitting a
+# stock-upstream .rbf into releases/.
+if is_pristine_upstream; then
+    exit 0
 fi
-# [MiSTer-DB9 END]
 
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"

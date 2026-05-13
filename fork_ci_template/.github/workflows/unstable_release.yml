@@ -23,10 +23,19 @@ jobs:
     - uses: actions/checkout@v6
       with:
         # We checkout the fork's main branch only as a starting point for
-        # remotes; unstable_release.sh resets to upstream/HEAD before building.
+        # remotes; unstable_preflight.sh fetches upstream + checks out the
+        # unstable/<branch> ref before unstable_release.sh resumes the merge.
         fetch-depth: 0
 
+    - name: Pre-flight skip check
+      id: preflight
+      run: ./.github/unstable_preflight.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Resolve Quartus image
+      if: steps.preflight.outputs.skip != 'true'
       id: image
       run: |
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
@@ -37,11 +46,13 @@ jobs:
         QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
 
     - name: Cache & load Quartus image
+      if: steps.preflight.outputs.skip != 'true'
       uses: ./.github/actions/docker-cache-load
       with:
         image: ${{ steps.image.outputs.image }}
 
     - name: Build unstable RBF from upstream HEAD
+      if: steps.preflight.outputs.skip != 'true'
       run: ./.github/unstable_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
