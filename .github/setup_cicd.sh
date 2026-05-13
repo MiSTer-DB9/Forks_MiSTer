@@ -18,6 +18,10 @@ setup_cicd_on_fork() {
     local MAINTAINER_EMAILS="$8"
     # [MiSTer-DB9 BEGIN] - 1 = v2 channel, 0 = legacy push_release.
     local RELEASE_V2_MODE="${9:-0}"
+    # Optional per-section extra source-hash globs (e.g. Main_DB9 builds via
+    # make → needs *.c *.cpp *.h *.hpp Makefile). Empty for HDL forks so their
+    # source_hash stays identical to pre-parameterisation runs.
+    local EXTRA_SOURCE_GLOBS="${10:-}"
     # [MiSTer-DB9 END]
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
@@ -74,6 +78,15 @@ setup_cicd_on_fork() {
     fi
 
     pushd ${TEMP_DIR} > /dev/null 2>&1
+
+    # [MiSTer-DB9 BEGIN] - per-fork compute_source_hash.sh extra-globs substitution.
+    # The canonical file ships `#<<EXTRA_SOURCE_GLOBS>>` so it stays bash-source-able
+    # locally (bash skips the comment). sed strips the leading `#` together with
+    # the placeholder, leaving the per-section globs as a real array element line.
+    sed -i \
+        -e "s%#<<EXTRA_SOURCE_GLOBS>>%${EXTRA_SOURCE_GLOBS}%g" \
+        ${TEMP_DIR}/.github/compute_source_hash.sh
+    # [MiSTer-DB9 END]
 
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
@@ -148,6 +161,11 @@ setup_cicd_on_fork() {
         echo "Committing .github / README changes."
         # Subject "BOT: Fork CI/CD setup changes." is matched by push_release.sh
         # to skip a build for already-released cores when only setup files moved.
+        # NOTE: do NOT add a skip-CI marker to this commit's body — the BOT setup
+        # commit doubles as a retrigger for transient build failures (Quartus
+        # docker hiccups, GitHub outage during a prior push_release). The
+        # in-script source-hash skip path (release_v2.sh) / commit-walk skip path
+        # (push_release.sh) handle the no-op case cheaply.
         git commit -m "BOT: Fork CI/CD setup changes." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
         DID_COMMIT=1
     fi
@@ -233,6 +251,14 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         fi
     done
     # [MiSTer-DB9 END]
+    # [MiSTer-DB9 BEGIN] - extra source-hash globs (per-section, optional).
+    # Take primary's value; groups share fork_repo so siblings must agree (or
+    # the primary wins). Empty for HDL forks → compute_source_hash.sh ends up
+    # with HDL_GLOBS identical to the pre-parameterisation array.
+    declare -n _primary_for_globs="${_group[0]}"
+    _EXTRA_SOURCE_GLOBS="${_primary_for_globs[extra_source_globs]:-}"
+    unset -n _primary_for_globs
+    # [MiSTer-DB9 END]
     for _fn in "${_group[@]}"; do
         declare -n _fd="$_fn"
         _RELEASE_CORE_NAMES="${_RELEASE_CORE_NAMES:+${_RELEASE_CORE_NAMES} }${_fd[release_core_name]}"
@@ -241,7 +267,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -250,7 +276,8 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
         "$_MAINTAINER_EMAILS" \
-        "$_RELEASE_V2_MODE"
+        "$_RELEASE_V2_MODE" \
+        "$_EXTRA_SOURCE_GLOBS"
 done > "${RESULTS_DIR}/groups.nul"
 
 export -f setup_cicd_on_fork retry
@@ -258,14 +285,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 9 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 10 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
             echo "Setting up CI/CD for $3 (cores: $1, release_v2=$9)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"; then
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}"; then
                 rc=0
             else
                 rc=$?

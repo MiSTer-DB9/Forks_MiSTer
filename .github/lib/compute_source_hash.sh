@@ -2,15 +2,15 @@
 # Shared by release_v2.sh and unstable_release.sh.
 # `HDL_GLOBS` doubles as the `find`-name filter for `compute_source_hash` and
 # as the path-filter argv tail for git-diff-based change detection — adding a
-# new file extension only requires editing this list. C/C++/Makefile entries
-# cover Main_MiSTer (HPS-side build, no HDL); HDL cores see no new matches.
+# new file extension only requires editing this list. `<<EXTRA_SOURCE_GLOBS>>`
+# is per-section: empty for HDL cores (default), expanded with C/C++/Makefile
+# entries for non-HDL forks (Main_MiSTer) via Forks.ini `EXTRA_SOURCE_GLOBS`.
 
 HDL_GLOBS=(
     '*.v' '*.sv' '*.vhd' '*.vhdl'
     '*.qsf' '*.qip' '*.qpf' '*.sdc'
     '*.tcl' '*.mif' '*.hex'
-    '*.c' '*.cpp' '*.h' '*.hpp'
-    'Makefile'
+    #<<EXTRA_SOURCE_GLOBS>>
 )
 
 # Path-sorted sha256 of every HDL/build-config file in the tree. Skips .git,
