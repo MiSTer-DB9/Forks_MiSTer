@@ -47,7 +47,11 @@ echo "Source hash: ${CURRENT_SOURCE_HASH}"
 
 # Two-step lookup: gh release list --json does NOT expose `body`, only
 # tagName/createdAt — fetch the newest matching tag, then gh release view it.
+# --exclude-drafts skips any straggler draft left behind by manual operations
+# (e.g. a partial historic backfill), which would otherwise be picked first
+# because its createdAt is more recent than the actually-latest real build.
 PREV_TAG=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
+    --exclude-drafts \
     --json tagName,createdAt \
     --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[0].tagName // \"\"" \
     2>/dev/null || echo "")

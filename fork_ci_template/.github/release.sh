@@ -131,6 +131,7 @@ if (( RETENTION > 0 )); then
     echo "Pruning to last ${RETENTION} releases on ${TAG_PREFIX}..."
     mapfile -t TO_DELETE < <(
         gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
+            --exclude-drafts \
             --json tagName,createdAt \
             --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[${RETENTION}:] | .[].tagName"
     )
