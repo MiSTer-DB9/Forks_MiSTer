@@ -36,8 +36,7 @@ jobs:
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
-        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
+        # key gate v1.5: MASTER_ROOT for SipHash MAC
         # sync_release.sh materialises sys/db9_key_secret.vh from this env var
         # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
-        # [MiSTer-DB9-Pro END]

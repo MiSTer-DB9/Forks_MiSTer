@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [MiSTer-DB9 BEGIN] - dispatch sync_unstable to forks whose upstream HEAD is
+# dispatch sync_unstable to forks whose upstream HEAD is
 # ahead of the last_unstable_sha recorded in the fork's "unstable-builds"
 # release body. Per-fork dispatch is independent + parallelized (PARALLEL_JOBS).
 
@@ -158,4 +158,3 @@ if (( ${#FAILED_FORKS[@]} > 0 )); then
 fi
 
 echo "DONE."
-# [MiSTer-DB9 END]

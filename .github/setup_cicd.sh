@@ -16,13 +16,11 @@ setup_cicd_on_fork() {
     local COMPILATION_INPUT="$6"
     local COMPILATION_OUTPUT="$7"
     local MAINTAINER_EMAILS="$8"
-    # [MiSTer-DB9 BEGIN] - 1 = v2 channel, 0 = legacy push_release.
-    local RELEASE_V2_MODE="${9:-0}"
-    # Optional per-section extra source-hash globs (e.g. Main_DB9 builds via
-    # make → needs *.c *.cpp *.h *.hpp Makefile). Empty for HDL forks so their
-    # source_hash stays identical to pre-parameterisation runs.
-    local EXTRA_SOURCE_GLOBS="${10:-}"
-    # [MiSTer-DB9 END]
+    # Optional per-section extra source-hash globs (e.g.
+    # Main_DB9 builds via make → needs *.c *.cpp *.h *.hpp Makefile). Empty
+    # for HDL forks so their source_hash stays identical to pre-parameterisation
+    # runs.
+    local EXTRA_SOURCE_GLOBS="${9:-}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -79,14 +77,13 @@ setup_cicd_on_fork() {
 
     pushd ${TEMP_DIR} > /dev/null 2>&1
 
-    # [MiSTer-DB9 BEGIN] - per-fork compute_source_hash.sh extra-globs substitution.
+    # per-fork compute_source_hash.sh extra-globs substitution.
     # The canonical file ships `#<<EXTRA_SOURCE_GLOBS>>` so it stays bash-source-able
     # locally (bash skips the comment). sed strips the leading `#` together with
     # the placeholder, leaving the per-section globs as a real array element line.
     sed -i \
         -e "s%#<<EXTRA_SOURCE_GLOBS>>%${EXTRA_SOURCE_GLOBS}%g" \
         ${TEMP_DIR}/.github/compute_source_hash.sh
-    # [MiSTer-DB9 END]
 
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
@@ -94,26 +91,13 @@ setup_cicd_on_fork() {
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
-        -e "s%<<RELEASE_V2_MODE>>%${RELEASE_V2_MODE}%g" \
         ${TEMP_DIR}/.github/sync_release.sh
-    sed -i \
-        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
-        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
-        ${TEMP_DIR}/.github/push_release.sh
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         ${TEMP_DIR}/.github/workflows/sync_release.yml
-    sed -i \
-        -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
-        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
-        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-        ${TEMP_DIR}/.github/workflows/push_release.yml
-    # [MiSTer-DB9 BEGIN] - unstable channel templating (mirrors sync_release sed pair)
+    # unstable channel templating (mirrors sync_release sed pair)
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
@@ -130,35 +114,23 @@ setup_cicd_on_fork() {
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         ${TEMP_DIR}/.github/workflows/unstable_release.yml
-    # [MiSTer-DB9 END]
 
-    # [MiSTer-DB9 BEGIN] - v2 channel: swap push_release for release_v2 templates.
-    if [[ "${RELEASE_V2_MODE}" == "1" ]]; then
-        sed -i \
-            -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
-            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-            -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-            -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
-            ${TEMP_DIR}/.github/release_v2.sh
-        sed -i \
-            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-            ${TEMP_DIR}/.github/preflight_skip.sh
-        sed -i \
-            -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
-            -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-            -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
-            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-            ${TEMP_DIR}/.github/workflows/release_v2.yml
-        rm -f \
-            ${TEMP_DIR}/.github/push_release.sh \
-            ${TEMP_DIR}/.github/workflows/push_release.yml
-    else
-        rm -f \
-            ${TEMP_DIR}/.github/release_v2.sh \
-            ${TEMP_DIR}/.github/workflows/release_v2.yml \
-            ${TEMP_DIR}/.github/preflight_skip.sh
-    fi
-    # [MiSTer-DB9 END]
+    # stable channel templating (release.{sh,yml} + preflight skip)
+    sed -i \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        ${TEMP_DIR}/.github/release.sh
+    sed -i \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        ${TEMP_DIR}/.github/preflight_skip.sh
+    sed -i \
+        -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        ${TEMP_DIR}/.github/workflows/release.yml
 
     DID_COMMIT=0
 
@@ -167,18 +139,16 @@ setup_cicd_on_fork() {
 
     if ! git diff --staged --quiet --exit-code ; then
         echo "Committing .github / README changes."
-        # Subject "BOT: Fork CI/CD setup changes." is matched by push_release.sh
-        # to skip a build for already-released cores when only setup files moved.
         # NOTE: do NOT add a skip-CI marker to this commit's body — the BOT setup
         # commit doubles as a retrigger for transient build failures (Quartus
-        # docker hiccups, GitHub outage during a prior push_release). The
-        # in-script source-hash skip path (release_v2.sh) / commit-walk skip path
-        # (push_release.sh) handle the no-op case cheaply.
+        # docker hiccups, GitHub outage during a prior release). The in-script
+        # source-hash skip path in release.sh handles the no-op case cheaply.
         git commit -m "BOT: Fork CI/CD setup changes." -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
         DID_COMMIT=1
     fi
 
-    # Sys helper drift commit (separate subject so push_release.sh rebuilds).
+    # Sys helper drift commit (separate from BOT setup so the commit log records
+    # why source_hash changed; release.sh skip check is hash-based anyway).
     if [[ ${SYNC_SYS} -eq 1 ]]; then
         for f in "${SYS_HELPERS[@]}"; do
             git add "${SYS_REL_DIR}/${f}"
@@ -250,23 +220,13 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     _RELEASE_CORE_NAMES=""
     _COMPILATION_INPUTS=""
     _COMPILATION_OUTPUTS=""
-    # [MiSTer-DB9 BEGIN] - multi-core groups move together as v2 or legacy.
-    _RELEASE_V2_MODE=0
-    for _fn in "${_group[@]}"; do
-        if [[ " ${Forks[release_v2_forks]:-} " == *" ${_fn} "* ]]; then
-            _RELEASE_V2_MODE=1
-            break
-        fi
-    done
-    # [MiSTer-DB9 END]
-    # [MiSTer-DB9 BEGIN] - extra source-hash globs (per-section, optional).
+    # extra source-hash globs (per-section, optional).
     # Take primary's value; groups share fork_repo so siblings must agree (or
     # the primary wins). Empty for HDL forks → compute_source_hash.sh ends up
     # with HDL_GLOBS identical to the pre-parameterisation array.
     declare -n _primary_for_globs="${_group[0]}"
     _EXTRA_SOURCE_GLOBS="${_primary_for_globs[extra_source_globs]:-}"
     unset -n _primary_for_globs
-    # [MiSTer-DB9 END]
     for _fn in "${_group[@]}"; do
         declare -n _fd="$_fn"
         _RELEASE_CORE_NAMES="${_RELEASE_CORE_NAMES:+${_RELEASE_CORE_NAMES} }${_fd[release_core_name]}"
@@ -275,7 +235,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -284,7 +244,6 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
         "$_MAINTAINER_EMAILS" \
-        "$_RELEASE_V2_MODE" \
         "$_EXTRA_SOURCE_GLOBS"
 done > "${RESULTS_DIR}/groups.nul"
 
@@ -293,14 +252,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 10 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 9 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
-            echo "Setting up CI/CD for $3 (cores: $1, release_v2=$9)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}"; then
+            echo "Setting up CI/CD for $3 (cores: $1)..."
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"; then
                 rc=0
             else
                 rc=$?

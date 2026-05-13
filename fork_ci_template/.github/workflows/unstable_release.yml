@@ -1,6 +1,6 @@
 name: Unstable Release
 
-# [MiSTer-DB9 BEGIN] - unstable channel: build upstream HEAD on each tick, ship
+# unstable channel: build upstream HEAD on each tick, ship
 # to "unstable-builds" prerelease assets (last 7 retained for rollback).
 # Concurrency keyed per-branch so multi-variant repos (GBA: master/GBA2P/
 # accuracy) build their variants in parallel without cancelling each other,
@@ -58,10 +58,8 @@ jobs:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
+        # key gate v1.5: MASTER_ROOT for SipHash MAC
         # unstable_release.sh materialises sys/db9_key_secret.vh from this env
         # var before Quartus compile (identical handling to sync_release.yml).
         # 64 hex chars = 32 bytes. KEEP THIS SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
-        # [MiSTer-DB9-Pro END]
-# [MiSTer-DB9 END]

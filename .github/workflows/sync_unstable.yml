@@ -1,6 +1,6 @@
 name: Sync Unstable
 
-# [MiSTer-DB9 BEGIN] - poll upstream HEAD per fork in Forks[UNSTABLE_FORKS] and
+# poll upstream HEAD per fork in Forks[UNSTABLE_FORKS] and
 # dispatch sync_unstable when ahead of last_unstable_sha recorded in each
 # fork's "unstable-builds" release body. Twice daily by default; tighten once
 # v1 cost shape is observed.
@@ -29,4 +29,3 @@ jobs:
         DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
         GH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
         PARALLEL_JOBS: 16
-# [MiSTer-DB9 END]

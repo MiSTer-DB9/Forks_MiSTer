@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [MiSTer-DB9 BEGIN] - shared pristine-upstream tripwire.
+# shared pristine-upstream tripwire.
 #
 # Refuses to build an un-ported fork's first BOT-setup push as a stock-
 # upstream RBF. Truth source: presence of joydb9saturn.v under any */sys/
@@ -31,4 +31,3 @@ is_pristine_upstream() {
     echo "Fork is pristine upstream (no */sys/joydb9saturn.v within depth 4). Run apply_db9_framework.sh before enabling builds. Skipping."
     return 0
 }
-# [MiSTer-DB9 END]

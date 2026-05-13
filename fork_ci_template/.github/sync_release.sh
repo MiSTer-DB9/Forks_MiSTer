@@ -13,16 +13,12 @@ MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
 QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
-# [MiSTer-DB9 BEGIN] - 1 → exit after merge+push so release_v2.yml builds.
-RELEASE_V2_MODE="<<RELEASE_V2_MODE>>"
-# [MiSTer-DB9 END]
 
-# [MiSTer-DB9 BEGIN] - fork-only cores have no upstream; sync_release is a no-op
+# fork-only cores have no upstream; sync_release is a no-op
 if [[ -z "${UPSTREAM_REPO}" ]]; then
     echo "No UPSTREAM_REPO configured — fork-only core, skipping sync."
     exit 0
 fi
-# [MiSTer-DB9 END]
 
 echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
@@ -106,62 +102,17 @@ echo
 
 git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
 
-# [MiSTer-DB9 BEGIN] - status bit collision tripwire (fork-only)
+# status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"
-# [MiSTer-DB9 END]
 
 git submodule update --init --recursive
 
-# [MiSTer-DB9 BEGIN] - v2 channel: skip inline Quartus; release_v2.yml builds.
-# NEED_REBUILD only picks the commit subject — release_v2.sh's source-hash
-# decides the real rebuild.
-if [[ "${RELEASE_V2_MODE}" == "1" ]]; then
-    if [[ "${NEED_REBUILD}" == "true" ]]; then
-        git commit -m "BOT: Merging upstream, release_v2 will publish ${CORE_NAME[*]}."
-    else
-        git commit -m "BOT: Merging upstream, no core released."
-    fi
-    retry -- git push origin "${MAIN_BRANCH}"
-    exit 0
-fi
-# [MiSTer-DB9 END]
-
-# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret before build
-# (writes sys/db9_key_secret.vh for FPGA cores, db9_key_secret.h for Main_MiSTer)
-./.github/materialize_secret.sh
-# [MiSTer-DB9-Pro END]
-
-if [[ "${NEED_REBUILD}" == "true" ]] ; then
-    RELEASE_FILES_LIST=()
-    for i in "${!CORE_NAME[@]}"; do
-        if [[ -n "${UPSTREAM_CORE_FILES[i]}" ]]; then
-            DEST_FILE="${UPSTREAM_CORE_FILES[i]}"
-        else
-            FILE_EXT="${COMPILATION_OUTPUT[i]##*.}"
-            DEST_FILE="${CORE_NAME[i]}_$(date +%Y%m%d)"
-            if [[ "${FILE_EXT}" != "${COMPILATION_OUTPUT[i]}" ]]; then
-                DEST_FILE="${DEST_FILE}.${FILE_EXT}"
-            fi
-        fi
-        echo
-        echo "Building '${DEST_FILE}' (triggered by upstream change)."
-        echo
-        echo "Build start:"
-        docker run --rm \
-            -v "$(pwd):/project" \
-            -e "COMPILATION_INPUT=${COMPILATION_INPUT[i]}" \
-            "${QUARTUS_IMAGE}" \
-            bash -c 'cd /project && /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile "${COMPILATION_INPUT}"' \
-            || ./.github/notify_error.sh "COMPILATION ERROR" "$@"
-        cp "${COMPILATION_OUTPUT[i]}" "releases/${DEST_FILE}"
-        RELEASE_FILES_LIST+=("${DEST_FILE}")
-    done
-    echo
-    echo "Pushing release:"
-    git add releases
-    git commit -m "BOT: Merging upstream, releasing ${RELEASE_FILES_LIST[*]}"
+# merge + push; release.yml picks up the push and builds.
+# NEED_REBUILD only picks the commit subject — release.sh's source-hash decides
+# the real rebuild.
+if [[ "${NEED_REBUILD}" == "true" ]]; then
+    git commit -m "BOT: Merging upstream, release will publish ${CORE_NAME[*]}."
 else
     git commit -m "BOT: Merging upstream, no core released."
 fi
-
 retry -- git push origin "${MAIN_BRANCH}"

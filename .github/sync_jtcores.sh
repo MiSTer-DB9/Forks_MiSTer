@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [MiSTer-DB9-Pro BEGIN] - jtcores gate-trio sync (v1.5 key gate)
+# jtcores gate-trio sync (v1.5 key gate)
 #
 # Mirrors fork_ci_template/sys/{siphash24.v,db9_key_gate.sv,db9_key_secret.vh}
 # into MiSTer-DB9/jtcores at modules/jtframe/target/mister/hdl/sys/. jtcores
@@ -71,4 +71,3 @@ else
 fi
 
 popd > /dev/null 2>&1
-# [MiSTer-DB9-Pro END]

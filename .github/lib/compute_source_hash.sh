@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared by release_v2.sh and unstable_release.sh.
+# Shared by release.sh and unstable_release.sh.
 # `HDL_GLOBS` doubles as the `find`-name filter for `compute_source_hash` and
 # as the path-filter argv tail for git-diff-based change detection — adding a
 # new file extension only requires editing this list. `<<EXTRA_SOURCE_GLOBS>>`
