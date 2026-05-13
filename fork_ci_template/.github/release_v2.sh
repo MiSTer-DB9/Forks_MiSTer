@@ -77,7 +77,7 @@ if [[ -n "${PREV_TAG}" ]]; then
     PREV_BODY=$(gh release view "${PREV_TAG}" --repo "${GITHUB_REPOSITORY}" \
         --json body --jq '.body' 2>/dev/null || echo "")
     if [[ -n "${PREV_BODY}" ]]; then
-        PREV_HASH=$(grep -oP '(?<=^source_hash:[[:space:]])\S+' <<<"${PREV_BODY}" \
+        PREV_HASH=$(sed -nE 's/^source_hash:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${PREV_BODY}" \
             | head -1 || true)
     fi
 fi
