@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# [MiSTer-DB9 BEGIN] - shared constants + helpers for the unstable channel.
+# shared constants + helpers for the unstable channel.
 # Sourced by both unstable_preflight.sh (cheap pre-check + state setup) and
 # unstable_release.sh (rerere train + merge + Quartus build + upload).
 #
@@ -71,4 +71,3 @@ for b in order:
 sys.stdout.write("\n".join(out).rstrip() + "\n")
 PY
 }
-# [MiSTer-DB9 END]

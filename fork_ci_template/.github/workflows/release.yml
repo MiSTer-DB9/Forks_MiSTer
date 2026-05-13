@@ -1,12 +1,12 @@
-name: Release v2
+name: Release
 
-# [MiSTer-DB9 BEGIN] - stable channel: build fork HEAD, publish to a per-commit
+# stable channel: build fork HEAD, publish to a per-commit
 # immutable tag `stable/<MAIN_BRANCH>/<YYYYMMDD>-<sha7>` with one GitHub Release
 # on top. Distribution picks the newest per variant via /releases?per_page=N
 # filtered by tag prefix. Per-branch concurrency key so multi-variant repos
 # build siblings in parallel.
 concurrency:
-  group: release-v2-${{ github.repository }}-${{ github.ref }}
+  group: release-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -59,13 +59,11 @@ jobs:
 
     - name: Build stable RBF from fork HEAD
       if: steps.preflight.outputs.skip != 'true'
-      run: ./.github/release_v2.sh <<MAINTAINER_EMAILS>>
+      run: ./.github/release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
-        # [MiSTer-DB9-Pro BEGIN] - 64 hex chars = 32 bytes. KEEP SECRET.
+        # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
-        # [MiSTer-DB9-Pro END]
-# [MiSTer-DB9 END]

@@ -40,9 +40,8 @@ git submodule update --init --recursive
 BUILD_SHA=$(git rev-parse HEAD)
 BUILD_SHA7="${BUILD_SHA:0:7}"
 
-# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret before build
+# materialize MASTER_ROOT secret before build
 ./.github/materialize_secret.sh
-# [MiSTer-DB9-Pro END]
 
 if ! command -v gh >/dev/null 2>&1; then
     echo "::error::gh CLI missing — cannot publish stable release"

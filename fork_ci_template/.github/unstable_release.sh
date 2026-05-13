@@ -73,9 +73,8 @@ git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
     -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}" \
     || ./.github/notify_error.sh "UNSTABLE MERGE CONFLICT" "$@"
 
-# [MiSTer-DB9 BEGIN] - status bit collision tripwire (fork-only)
+# status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UNSTABLE STATUS BIT COLLISION" "$@"
-# [MiSTer-DB9 END]
 
 # Push the merge commits to origin/${UNSTABLE_BRANCH} before Quartus — anchors
 # the rerere-trained merge state so the next run's train_rerere can replay it
@@ -88,9 +87,8 @@ if [[ -f .gitmodules ]]; then
     git submodule update --init --recursive
 fi
 
-# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret before build
+# materialize MASTER_ROOT secret before build
 ./.github/materialize_secret.sh
-# [MiSTer-DB9-Pro END]
 
 # ----- Per-core source-hash diff-skip + Quartus build + release upload -----
 

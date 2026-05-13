@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# [MiSTer-DB9-Pro BEGIN] - materialize MASTER_ROOT secret for v1.5 key gate
+# materialize MASTER_ROOT secret for v1.5 key gate
 #
-# Sourced by push_release.sh / sync_release.sh before the build step.
+# Sourced by release.sh / unstable_release.sh before the build step.
 # This template ships canonically in Forks_MiSTer/fork_ci_template/.github/
 # and is sync-copied into every fork's .github/ (including Main_MiSTer).
 #
@@ -66,4 +66,3 @@ fi
 if [[ -z "${KEY_CPP}" && -z "${GATE_FILE}" ]]; then
     echo "[DB9-Key v1.5] no target detected (no db9_key.cpp, no */sys/db9_key_gate.sv within depth 4) — nothing to do"
 fi
-# [MiSTer-DB9-Pro END]
