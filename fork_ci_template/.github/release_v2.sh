@@ -65,17 +65,21 @@ echo "Source hash: ${CURRENT_SOURCE_HASH}"
 
 # Skip lookup: list this variant's releases (limit 100 so a quiet variant's
 # newest survives sibling activity in a multi-variant repo), take the newest
-# by createdAt, parse `source_hash:` from its body.
-PREV_JSON=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
-    --json tagName,createdAt,body \
-    --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[0] // null" \
-    2>/dev/null || echo null)
-PREV_TAG=""
+# by createdAt, then fetch its body separately and parse `source_hash:`.
+# Note: `gh release list --json` does NOT expose `body` — that field is only
+# available via `gh release view`. The two-step lookup is the correct shape.
+PREV_TAG=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
+    --json tagName,createdAt \
+    --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[0].tagName // \"\"" \
+    2>/dev/null || echo "")
 PREV_HASH=""
-if [[ -n "${PREV_JSON}" && "${PREV_JSON}" != "null" ]]; then
-    PREV_TAG=$(jq -r '.tagName // ""' <<<"${PREV_JSON}")
-    PREV_HASH=$(jq -r '.body // ""' <<<"${PREV_JSON}" \
-        | grep -oP '(?<=^source_hash:[[:space:]])\S+' | head -1 || true)
+if [[ -n "${PREV_TAG}" ]]; then
+    PREV_BODY=$(gh release view "${PREV_TAG}" --repo "${GITHUB_REPOSITORY}" \
+        --json body --jq '.body' 2>/dev/null || echo "")
+    if [[ -n "${PREV_BODY}" ]]; then
+        PREV_HASH=$(grep -oP '(?<=^source_hash:[[:space:]])\S+' <<<"${PREV_BODY}" \
+            | head -1 || true)
+    fi
 fi
 echo "Previous tag: ${PREV_TAG:-<none>}"
 echo "Previous source hash: ${PREV_HASH:-<none>}"
