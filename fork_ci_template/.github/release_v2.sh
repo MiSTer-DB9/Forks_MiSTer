@@ -21,7 +21,7 @@ QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workf
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
 
 TAG_PREFIX="stable/${MAIN_BRANCH}/"
-RETENTION="${RETENTION:-30}"
+RETENTION="${RETENTION:-0}"
 
 # Pristine-upstream tripwire and source-hash skip both run pre-checkout in the
 # workflow's "Pre-flight skip check" step (./.github/preflight_skip.sh). If we
@@ -96,7 +96,7 @@ release_body() {
         retention_label="last ${RETENTION}"
     fi
     cat <<EOF
-Stable RBF build for \`${MAIN_BRANCH}\`. Retention: ${retention_label} per branch (older releases auto-pruned).
+Stable RBF build for \`${MAIN_BRANCH}\`. Retention: ${retention_label} per branch.
 
 branch:        ${MAIN_BRANCH}
 build_sha:     ${BUILD_SHA}
