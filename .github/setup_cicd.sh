@@ -12,15 +12,16 @@ setup_cicd_on_fork() {
     local UPSTREAM_REPO="$2"
     local FORK_REPO="$3"
     local MAIN_BRANCH="$4"
-    local QUARTUS_IMAGE="$5"
-    local COMPILATION_INPUT="$6"
-    local COMPILATION_OUTPUT="$7"
-    local MAINTAINER_EMAILS="$8"
+    local UPSTREAM_BRANCH="$5"
+    local QUARTUS_IMAGE="$6"
+    local COMPILATION_INPUT="$7"
+    local COMPILATION_OUTPUT="$8"
+    local MAINTAINER_EMAILS="$9"
     # Optional per-section extra source-hash globs (e.g.
     # Main_DB9 builds via make → needs *.c *.cpp *.h *.hpp Makefile). Empty
     # for HDL forks so their source_hash stays identical to pre-parameterisation
     # runs.
-    local EXTRA_SOURCE_GLOBS="${9:-}"
+    local EXTRA_SOURCE_GLOBS="${10:-}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -89,6 +90,7 @@ setup_cicd_on_fork() {
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         ${TEMP_DIR}/.github/sync_release.sh
@@ -108,6 +110,7 @@ setup_cicd_on_fork() {
     sed -i \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         ${TEMP_DIR}/.github/unstable_preflight.sh
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
@@ -213,6 +216,9 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     _UPSTREAM_REPO="${_primary[upstream_repo]:-}"
     _FORK_REPO="${_primary[fork_repo]}"
     _MAIN_BRANCH="${_primary[main_branch]}"
+    # Group siblings share fork_repo|main_branch → must agree on upstream_branch;
+    # primary wins (same rule as UPSTREAM_REPO above).
+    _UPSTREAM_BRANCH="${_primary[upstream_branch]:-${_primary[main_branch]}}"
     _QUARTUS_IMAGE="${_primary[quartus_image]:-}"
     _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
     unset -n _primary
@@ -235,11 +241,12 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
         "$_MAIN_BRANCH" \
+        "$_UPSTREAM_BRANCH" \
         "$_QUARTUS_IMAGE" \
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
@@ -252,14 +259,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 9 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 10 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
             echo "Setting up CI/CD for $3 (cores: $1)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"; then
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}"; then
                 rc=0
             else
                 rc=$?

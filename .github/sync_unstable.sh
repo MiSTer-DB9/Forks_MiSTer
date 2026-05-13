@@ -17,6 +17,7 @@ check_and_dispatch() {
     local UPSTREAM_REPO="$2"
     local FORK_REPO="$3"
     local MAIN_BRANCH="$4"
+    local UPSTREAM_BRANCH="$5"
 
     if [[ -z "${UPSTREAM_REPO}" ]]; then
         echo "[${fork_name}] no UPSTREAM_REPO — skipping (fork-only core)"
@@ -31,9 +32,9 @@ check_and_dispatch() {
     local NAME="${BASH_REMATCH[4]}"
 
     local UPSTREAM_HEAD
-    UPSTREAM_HEAD=$(retry -- git ls-remote "${UPSTREAM_REPO}" "refs/heads/${MAIN_BRANCH}" | awk '{print $1}')
+    UPSTREAM_HEAD=$(retry -- git ls-remote "${UPSTREAM_REPO}" "refs/heads/${UPSTREAM_BRANCH}" | awk '{print $1}')
     if [[ -z "${UPSTREAM_HEAD}" ]]; then
-        >&2 echo "[${fork_name}] could not resolve upstream HEAD on ${MAIN_BRANCH}"
+        >&2 echo "[${fork_name}] could not resolve upstream HEAD on ${UPSTREAM_BRANCH}"
         return 1
     fi
 
@@ -76,6 +77,8 @@ for key in ("last_unstable_sha", "last_failed_sha"):
     # workflow_dispatch with explicit ref: repository_dispatch only fires on
     # the repo's default branch, which would silently drop variant branches
     # (e.g. GBA2P_DB9 lives on GBA_MiSTer's GBA2P branch, not master).
+    # Dispatch ref stays MAIN_BRANCH: the workflow file lives on the fork's
+    # downstream branch.
     echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} != last ${LAST_SHA:0:7} — dispatching unstable_release.yml on ${MAIN_BRANCH}"
     local WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${OWNER}/${NAME}/actions/workflows/unstable_release.yml/dispatches"
     retry -- curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
@@ -106,31 +109,32 @@ fi
 RESULTS_DIR="$(mktemp -d)"
 trap 'rm -rf "${RESULTS_DIR}"' EXIT INT
 
-# Serialize each fork's tuple (name, upstream, fork_repo, main_branch) NUL-
-# separated so xargs subshells receive everything they need as positional
-# args — bash cannot export associative arrays, so per-fork dicts loaded via
-# `source <(...)` are NOT visible to the xargs children.
+# Serialize each fork's tuple NUL-separated so xargs subshells receive
+# everything they need as positional args — bash cannot export associative
+# arrays, so per-fork dicts loaded via `source <(...)` are NOT visible to the
+# xargs children.
 for fork_name in ${Forks[unstable_forks]}; do
     declare -n _fd="$fork_name"
-    printf '%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0' \
         "$fork_name" \
         "${_fd[upstream_repo]:-}" \
         "${_fd[fork_repo]:-}" \
-        "${_fd[main_branch]:-}"
+        "${_fd[main_branch]:-}" \
+        "${_fd[upstream_branch]:-${_fd[main_branch]}}"
     unset -n _fd
 done > "${RESULTS_DIR}/forks.nul"
 
 export -f check_and_dispatch retry
 export DISPATCH_USER DISPATCH_TOKEN RESULTS_DIR
 
-# shellcheck disable=SC2016 # $1..$4 inside the heredoc references xargs subshell args
-xargs -0 -n 4 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
+# shellcheck disable=SC2016 # $1..$5 inside the heredoc references xargs subshell args
+xargs -0 -n 5 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$1" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
-            if ! check_and_dispatch "$1" "$2" "$3" "$4"; then
+            if ! check_and_dispatch "$1" "$2" "$3" "$4" "$5"; then
                 echo "FORK FAILED: $1" >&2
                 printf "%s\n" "$1" > "${RESULTS_DIR}/${SAFE_NAME}.fail"
             fi
