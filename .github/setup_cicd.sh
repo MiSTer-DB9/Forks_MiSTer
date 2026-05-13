@@ -122,6 +122,10 @@ setup_cicd_on_fork() {
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         ${TEMP_DIR}/.github/unstable_release.sh
     sed -i \
+        -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        ${TEMP_DIR}/.github/unstable_preflight.sh
+    sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
@@ -137,6 +141,9 @@ setup_cicd_on_fork() {
             -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
             ${TEMP_DIR}/.github/release_v2.sh
         sed -i \
+            -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+            ${TEMP_DIR}/.github/preflight_skip.sh
+        sed -i \
             -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
             -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
             -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
@@ -148,7 +155,8 @@ setup_cicd_on_fork() {
     else
         rm -f \
             ${TEMP_DIR}/.github/release_v2.sh \
-            ${TEMP_DIR}/.github/workflows/release_v2.yml
+            ${TEMP_DIR}/.github/workflows/release_v2.yml \
+            ${TEMP_DIR}/.github/preflight_skip.sh
     fi
     # [MiSTer-DB9 END]
 

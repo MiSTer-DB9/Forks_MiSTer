@@ -15,6 +15,8 @@
 #    Last ${RETENTION} retained per core for manual rollback.
 #  - cheap HDL-paths pre-check (3-way SHA diff: upstream/master/branch) skips
 #    rerere training + merge + Quartus when no synthesis input changed.
+#    Performed pre-checkout in unstable_preflight.sh — if we reach this
+#    script the cheap pre-check already emitted skip=false.
 #  - post-merge source-hash diff-skip avoids redundant Quartus runs.
 #
 # Per-core DB9 wiring (joydb_1/joydb_2 → joystick_0/joystick_1 in <core>.sv,
@@ -32,7 +34,6 @@ source "${SCRIPT_DIR}/rerere_train.sh"
 # shellcheck source=compute_source_hash.sh
 source "${SCRIPT_DIR}/compute_source_hash.sh"
 
-UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
@@ -40,166 +41,21 @@ COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
 QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
 
-UNSTABLE_TAG="unstable-builds"
-# Per-variant ref name: multi-branch forks (GBA: master / GBA2P / accuracy,
-# X68000: master / SECOND_MT32, …) need a distinct `unstable` head per
-# variant or the second dispatch clobbers the first's merge state.
-UNSTABLE_BRANCH="unstable/${MAIN_BRANCH}"
-RETENTION=7
-# HDL_GLOBS + compute_source_hash come from compute_source_hash.sh.
+# UNSTABLE_TAG / UNSTABLE_BRANCH / RETENTION + write_release_body shared with
+# unstable_preflight.sh; depends on MAIN_BRANCH already being set.
+# shellcheck source=unstable_lib.sh
+source "${SCRIPT_DIR}/unstable_lib.sh"
 
-# Emit the merged release body with this variant's stanza updated. Multi-
-# branch forks (GBA: master / GBA2P / accuracy, X68000: master / USERIO2,
-# …) share one `unstable-builds` GitHub Release, so the body is laid out
-# as one `[${MAIN_BRANCH}]` stanza per variant. Read-modify-write: fetch
-# the current body, replace this variant's stanza in place (preserving
-# encounter order), append a new stanza if absent, leave sibling
-# variants' stanzas untouched. Same shape from both the pre-check skip
-# path and the post-build success path so they cannot drift apart.
-write_release_body() {
-    local upstream_sha="$1" master_sha="$2" branch_sha="$3" ts="$4"
-    local existing_body
-    existing_body=$(gh release view "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body' 2>/dev/null || echo "")
-    UPSTREAM_SHA="${upstream_sha}" \
-    MASTER_SHA="${master_sha}" \
-    BRANCH_SHA="${branch_sha}" \
-    TS="${ts}" \
-    MAIN_BRANCH="${MAIN_BRANCH}" \
-    RETENTION="${RETENTION}" \
-    EXISTING_BODY="${existing_body}" \
-    python3 - <<'PY'
-import os, re, sys
-branch = os.environ["MAIN_BRANCH"]
-header = f"Per-core unstable RBFs built off upstream HEAD. Last {os.environ['RETENTION']} retained per filename pattern."
-new_stanza = (
-    f"last_unstable_sha:        {os.environ['UPSTREAM_SHA']}\n"
-    f"last_unstable_master_sha: {os.environ['MASTER_SHA']}\n"
-    f"last_unstable_branch_sha: {os.environ['BRANCH_SHA']}\n"
-    f"last_unstable_ts:         {os.environ['TS']}"
-)
-stanzas = {}
-order = []
-current = None
-buf = []
-for line in os.environ.get("EXISTING_BODY", "").splitlines():
-    m = re.match(r"^\[([^\]]+)\]\s*$", line)
-    if m:
-        if current is not None:
-            stanzas[current] = "\n".join(buf).rstrip()
-            if current not in order:
-                order.append(current)
-        current = m.group(1)
-        buf = []
-    elif current is not None:
-        buf.append(line)
-if current is not None:
-    stanzas[current] = "\n".join(buf).rstrip()
-    if current not in order:
-        order.append(current)
-if branch not in order:
-    order.append(branch)
-stanzas[branch] = new_stanza
-out = [header, ""]
-for b in order:
-    out.append(f"[{b}]")
-    out.append(stanzas[b])
-    out.append("")
-sys.stdout.write("\n".join(out).rstrip() + "\n")
-PY
-}
-
-# Fork-only cores have no upstream HEAD to follow — silently no-op.
-if [[ -z "${UPSTREAM_REPO}" ]]; then
-    echo "No UPSTREAM_REPO configured — fork-only core, unstable channel disabled."
-    exit 0
-fi
-
-echo "Fetching upstream:"
-git remote remove upstream 2> /dev/null || true
-git remote add upstream "${UPSTREAM_REPO}"
-retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
-UPSTREAM_SHA=$(git rev-parse "remotes/upstream/${MAIN_BRANCH}")
+# State exported by unstable_preflight.sh via $GITHUB_ENV (same job, same
+# runner — the upstream remote is already configured, the unstable branch
+# is checked out, and the catchup-merge with master has already happened).
+UPSTREAM_SHA="${UPSTREAM_SHA:?UPSTREAM_SHA env not set — should be exported by unstable_preflight.sh}"
+MASTER_SHA="${MASTER_SHA:?MASTER_SHA env not set — should be exported by unstable_preflight.sh}"
+UNSTABLE_BRANCH_SHA_BEFORE="${UNSTABLE_BRANCH_SHA_BEFORE:?UNSTABLE_BRANCH_SHA_BEFORE env not set — should be exported by unstable_preflight.sh}"
+RELEASE_EXISTS="${RELEASE_EXISTS:?RELEASE_EXISTS env not set — should be exported by unstable_preflight.sh}"
 UPSTREAM_SHA7="${UPSTREAM_SHA:0:7}"
-echo "Upstream HEAD @ ${MAIN_BRANCH}: ${UPSTREAM_SHA}"
 
-export GIT_MERGE_AUTOEDIT=no
-git config --global user.email "theypsilon@gmail.com"
-git config --global user.name "The CI/CD Bot"
-git config --global rerere.enabled true
-
-echo
-echo "Preparing unstable branch:"
-if [[ -f .git/shallow ]]; then
-    retry -- git fetch origin --unshallow
-fi
-git checkout -qf "${MAIN_BRANCH}"
-MASTER_SHA=$(git rev-parse HEAD)
-
-# Probe the remote (not the local clone — actions/checkout@v6's fetch-depth:0
-# brings full history of the checked-out ref only, NOT every remote branch).
-# Bootstrap from MAIN_BRANCH on first run; master is never written here, so
-# the stable invariant (master pinned to last-released upstream commit) holds.
-if git ls-remote --exit-code origin "refs/heads/${UNSTABLE_BRANCH}" >/dev/null 2>&1; then
-    retry -- git fetch --no-tags origin "refs/heads/${UNSTABLE_BRANCH}:refs/remotes/origin/${UNSTABLE_BRANCH}"
-    git checkout -B "${UNSTABLE_BRANCH}" "origin/${UNSTABLE_BRANCH}"
-else
-    echo "No origin/${UNSTABLE_BRANCH} yet — bootstrapping from ${MAIN_BRANCH}."
-    git checkout -B "${UNSTABLE_BRANCH}" "${MASTER_SHA}"
-    retry -- git push origin "${UNSTABLE_BRANCH}"
-fi
-UNSTABLE_BRANCH_SHA_BEFORE=$(git rev-parse HEAD)
-
-# Catch up unstable with any stable-line progress since the last unstable run.
-# Conflicts here are rare (master advances only via stable's already-resolved
-# merges) but routed through notify_error.sh just in case.
-if ! git merge-base --is-ancestor "${MASTER_SHA}" HEAD; then
-    git merge -Xignore-all-space --no-ff "${MASTER_SHA}" \
-        -m "BOT: Unstable catchup with ${MAIN_BRANCH} @ ${MASTER_SHA:0:7}" \
-        || ./.github/notify_error.sh "UNSTABLE MASTER CATCHUP CONFLICT" "$@"
-fi
-
-# Cheap pre-check: if neither upstream's new commits, nor stable master's
-# progression, nor any maintainer commit on unstable touched HDL paths since
-# the previous unstable build, the merge result for HDL files would be bit-
-# identical to last build → skip rerere training + merge + push + Quartus
-# entirely. Reads last_unstable_{sha,master_sha,branch_sha} from release body.
-RELEASE_JSON=""
-RELEASE_EXISTS=0
-if gh release view "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --json body 2>/dev/null > /tmp/release_body.json; then
-    RELEASE_EXISTS=1
-    RELEASE_JSON=$(cat /tmp/release_body.json)
-fi
-LAST_UPSTREAM_SHA=""
-LAST_MASTER_SHA=""
-LAST_BRANCH_SHA=""
-if [[ -n "${RELEASE_JSON}" ]]; then
-    read -r LAST_UPSTREAM_SHA LAST_MASTER_SHA LAST_BRANCH_SHA < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
-import json, sys, os, re
-body = json.load(sys.stdin).get("body", "")
-branch = os.environ["MAIN_BRANCH"]
-# Extract the stanza for this variant: starts at "[<branch>]" line, ends
-# at the next "[…]" header (or EOF). Multi-branch forks (GBA, X68000)
-# share one release body with one stanza per variant; siblings ignored.
-pat = re.compile(rf"\[{re.escape(branch)}\]\s*\n(.*?)(?=\n\[|\Z)", re.DOTALL)
-m = pat.search(body)
-stanza = m.group(1) if m else ""
-def find(key):
-    mm = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", stanza)
-    return mm.group(1) if mm else ""
-print(find("last_unstable_sha"), find("last_unstable_master_sha"), find("last_unstable_branch_sha"))
-')
-fi
-if [[ -n "${LAST_UPSTREAM_SHA}" && -n "${LAST_MASTER_SHA}" && -n "${LAST_BRANCH_SHA}" ]]; then
-    UPSTREAM_HDL_DIFF=$(git diff --name-only "${LAST_UPSTREAM_SHA}..${UPSTREAM_SHA}" -- "${HDL_GLOBS[@]}" 2>/dev/null || echo NONEMPTY)
-    MASTER_HDL_DIFF=$(git diff --name-only "${LAST_MASTER_SHA}..${MASTER_SHA}" -- "${HDL_GLOBS[@]}" 2>/dev/null || echo NONEMPTY)
-    BRANCH_HDL_DIFF=$(git diff --name-only "${LAST_BRANCH_SHA}..${UNSTABLE_BRANCH_SHA_BEFORE}" -- "${HDL_GLOBS[@]}" 2>/dev/null || echo NONEMPTY)
-    if [[ -z "${UPSTREAM_HDL_DIFF}" && -z "${MASTER_HDL_DIFF}" && -z "${BRANCH_HDL_DIFF}" ]]; then
-        echo "No HDL paths changed in upstream/master/unstable since last build (${LAST_UPSTREAM_SHA:0:7}/${LAST_MASTER_SHA:0:7}/${LAST_BRANCH_SHA:0:7}) — skipping merge + Quartus."
-        gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" \
-            --notes "$(write_release_body "${UPSTREAM_SHA}" "${MASTER_SHA}" "${UNSTABLE_BRANCH_SHA_BEFORE}" "$(date -u +%Y%m%d_%H%M)")"
-        exit 0
-    fi
-fi
+echo "Resuming after preflight: upstream=${UPSTREAM_SHA7} master=${MASTER_SHA:0:7} unstable=${UNSTABLE_BRANCH_SHA_BEFORE:0:7}"
 
 echo
 echo "START rerere-train"

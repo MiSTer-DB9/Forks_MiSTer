@@ -23,17 +23,10 @@ GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh relea
 TAG_PREFIX="stable/${MAIN_BRANCH}/"
 RETENTION="${RETENTION:-30}"
 
-# [MiSTer-DB9 BEGIN] - pristine-upstream tripwire: refuse to build an
-# un-ported fork's first BOT-setup push as a stock-upstream RBF.
-SATURN_HIT=$(find . -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
-if [[ -z "${SATURN_HIT}" ]]; then
-    ANY_SYS=$(find . -maxdepth 4 -type d -name sys -print -quit 2>/dev/null)
-    if [[ -n "${ANY_SYS}" ]]; then
-        echo "Fork is pristine upstream (no */sys/joydb9saturn.v within depth 4). Run apply_db9_framework.sh before enabling builds. Skipping."
-        exit 0
-    fi
-fi
-# [MiSTer-DB9 END]
+# Pristine-upstream tripwire and source-hash skip both run pre-checkout in the
+# workflow's "Pre-flight skip check" step (./.github/preflight_skip.sh). If we
+# reach this script the preflight emitted skip=false, so neither gate fires
+# again here — single source of truth, no duplication.
 
 export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
@@ -55,39 +48,12 @@ if ! command -v gh >/dev/null 2>&1; then
     echo "::error::gh CLI missing — cannot publish stable release"
     exit 1
 fi
-if ! command -v jq >/dev/null 2>&1; then
-    echo "::error::jq missing — required for release-body parsing"
-    exit 1
-fi
 
+# Hash again so the release body's `source_hash:` line below records the exact
+# tree state at build time. Excludes db9_key_secret.{h,vh} so this matches the
+# preflight value despite materialize_secret.sh having run in between.
 CURRENT_SOURCE_HASH=$(compute_source_hash)
 echo "Source hash: ${CURRENT_SOURCE_HASH}"
-
-# Skip lookup: list this variant's releases (limit 100 so a quiet variant's
-# newest survives sibling activity in a multi-variant repo), take the newest
-# by createdAt, then fetch its body separately and parse `source_hash:`.
-# Note: `gh release list --json` does NOT expose `body` — that field is only
-# available via `gh release view`. The two-step lookup is the correct shape.
-PREV_TAG=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
-    --json tagName,createdAt \
-    --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[0].tagName // \"\"" \
-    2>/dev/null || echo "")
-PREV_HASH=""
-if [[ -n "${PREV_TAG}" ]]; then
-    PREV_BODY=$(gh release view "${PREV_TAG}" --repo "${GITHUB_REPOSITORY}" \
-        --json body --jq '.body' 2>/dev/null || echo "")
-    if [[ -n "${PREV_BODY}" ]]; then
-        PREV_HASH=$(sed -nE 's/^source_hash:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${PREV_BODY}" \
-            | head -1 || true)
-    fi
-fi
-echo "Previous tag: ${PREV_TAG:-<none>}"
-echo "Previous source hash: ${PREV_HASH:-<none>}"
-
-if [[ "${FORCED:-false}" != "true" && -n "${PREV_HASH}" && "${PREV_HASH}" == "${CURRENT_SOURCE_HASH}" ]]; then
-    echo "Source hash unchanged — skipping Quartus build. Previous release ${PREV_TAG} stays latest for ${MAIN_BRANCH}."
-    exit 0
-fi
 
 TIMESTAMP=$(date -u +%Y%m%d_%H%M)
 DATE_STAMP=$(date -u +%Y%m%d)
