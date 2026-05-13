@@ -343,9 +343,13 @@ echo "Pruning to last ${RETENTION} RBFs per core..."
 ASSETS_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${UNSTABLE_TAG}" --jq '.assets')
 for i in "${!CORE_NAME[@]}"; do
     PREFIX="${CORE_NAME[i]}_unstable_"
+    # Match by prefix only — the per-core prefix already includes `_unstable_`,
+    # so any other asset (e.g. LatestBuild<Core>.zip baseline) won't collide.
+    # No extension filter — Main_MiSTer's `MiSTer_unstable_<ts>_<sha7>` carries
+    # no extension and would otherwise accumulate past RETENTION.
     mapfile -t TO_DELETE < <(
         printf '%s' "${ASSETS_JSON}" | jq -r \
-            "map(select(.name | startswith(\"${PREFIX}\")) | select(.name | endswith(\".rbf\")))
+            "map(select(.name | startswith(\"${PREFIX}\")))
              | sort_by(.created_at) | reverse
              | .[${RETENTION}:]
              | .[].name"

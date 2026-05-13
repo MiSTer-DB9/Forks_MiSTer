@@ -2,17 +2,20 @@
 # Shared by release_v2.sh and unstable_release.sh.
 # `HDL_GLOBS` doubles as the `find`-name filter for `compute_source_hash` and
 # as the path-filter argv tail for git-diff-based change detection — adding a
-# new file extension only requires editing this list.
+# new file extension only requires editing this list. C/C++/Makefile entries
+# cover Main_MiSTer (HPS-side build, no HDL); HDL cores see no new matches.
 
 HDL_GLOBS=(
     '*.v' '*.sv' '*.vhd' '*.vhdl'
     '*.qsf' '*.qip' '*.qpf' '*.sdc'
     '*.tcl' '*.mif' '*.hex'
+    '*.c' '*.cpp' '*.h' '*.hpp'
+    'Makefile'
 )
 
 # Path-sorted sha256 of every HDL/build-config file in the tree. Skips .git,
-# releases/ (stable RBFs), output_files/ (Quartus artifacts). Adds, removes,
-# renames, content edits all change the digest.
+# releases/ (stable RBFs), output_files/ (Quartus artifacts), bin/ (Main_MiSTer
+# BUILDDIR). Adds, removes, renames, content edits all change the digest.
 compute_source_hash() {
     local find_filter=()
     local first=1
@@ -24,7 +27,7 @@ compute_source_hash() {
             find_filter+=(-o -name "${g}")
         fi
     done
-    find . \( -path ./.git -o -path ./releases -o -path ./output_files \) -prune \
+    find . \( -path ./.git -o -path ./releases -o -path ./output_files -o -path ./bin \) -prune \
         -o -type f \( "${find_filter[@]}" \) -print0 \
         | LC_ALL=C sort -z \
         | xargs -0 sha256sum \
