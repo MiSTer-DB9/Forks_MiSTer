@@ -138,6 +138,11 @@ echo "Previous source hash: ${PREV_HASH:-<none>}"
 if [[ -n "${PREV_HASH}" && "${PREV_HASH}" == "${CURRENT_SOURCE_HASH}" ]]; then
     echo "Source hash unchanged — skipping Quartus build."
     rm -rf "${PREV_DIR}"
+    # Advance last_unstable_sha so sync_unstable.sh recognises this upstream
+    # HEAD as handled. Mirrors the preflight HDL-no-change skip path; without
+    # it, every subsequent cron tick redispatches the same UPSTREAM_SHA.
+    gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" \
+        --notes "$(write_release_body "${UPSTREAM_SHA}" "${MASTER_SHA}" "$(git rev-parse HEAD)" "$(date -u +%Y%m%d_%H%M)")"
     exit 0
 fi
 rm -rf "${PREV_DIR}"
