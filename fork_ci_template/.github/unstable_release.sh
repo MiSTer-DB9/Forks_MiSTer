@@ -133,15 +133,19 @@ if [[ -n "${PREV_HASH}" && "${PREV_HASH}" == "${CURRENT_SOURCE_HASH}" ]]; then
 fi
 rm -rf "${PREV_DIR}"
 
-if (( ! RELEASE_EXISTS )); then
+# Re-check existence right before create — preflight's gh release view can flap
+# on transient API errors, which would leave RELEASE_EXISTS=0 even when the
+# release actually exists (HTTP 422 "tag_name already exists" then aborts the
+# whole run). Re-querying here makes the create idempotent.
+if (( ! RELEASE_EXISTS )) && ! gh release view "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
     echo "Creating ${UNSTABLE_TAG} prerelease..."
     gh release create "${UNSTABLE_TAG}" \
         --repo "${GITHUB_REPOSITORY}" \
         --prerelease \
         --title "Unstable builds" \
         --notes "Per-core unstable RBFs built off upstream HEAD. Last ${RETENTION} retained per filename pattern."
-    RELEASE_EXISTS=1
 fi
+RELEASE_EXISTS=1
 
 TIMESTAMP=$(date -u +%Y%m%d_%H%M)
 UPLOAD_FILES=()
@@ -151,7 +155,14 @@ for i in "${!CORE_NAME[@]}"; do
     # <Core>_unstable_YYYYMMDD_HHMM_<sha7>_DB9.<ext> — the trailing _DB9 marker
     # mirrors the stable channel naming so every fork-built asset (stable or
     # unstable) carries the fork provenance on GitHub Releases and on the SD card.
-    RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9.${FILE_EXT}"
+    # Main_MiSTer ships bin/MiSTer with no extension; ##*.* returns the whole
+    # path → drop the dot suffix so cp lands on the right file. Same guard
+    # lives in stable release.sh.
+    if [[ "${FILE_EXT}" == "${COMPILATION_OUTPUT[i]}" ]]; then
+        RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9"
+    else
+        RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9.${FILE_EXT}"
+    fi
     echo
     echo "Building '${RBF_NAME}'..."
     docker run --rm \
