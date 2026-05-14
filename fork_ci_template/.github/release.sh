@@ -61,12 +61,15 @@ UPLOAD_FILES=()
 
 for i in "${!CORE_NAME[@]}"; do
     FILE_EXT="${COMPILATION_OUTPUT[i]##*.}"
-    # <Core>_YYYYMMDD_<sha7>.<ext> — Distribution's widened regex matches both
-    # this and the pre-rework legacy <Core>_YYYYMMDD form so rollover cleans up.
+    # <Core>_YYYYMMDD_<sha7>_DB9.<ext> — the trailing _DB9 marks every fork-built
+    # asset for end-user provenance (visible on GitHub Releases and on the SD
+    # card). Distribution's widened regex matches the marked form, the prior
+    # `_<sha7>` (pre-marker) form, and the pre-rework legacy `_YYYYMMDD` form so
+    # rollover cleans up.
     if [[ "${FILE_EXT}" == "${COMPILATION_OUTPUT[i]}" ]]; then
-        RBF_NAME="${CORE_NAME[i]}_${DATE_STAMP}_${BUILD_SHA7}"
+        RBF_NAME="${CORE_NAME[i]}_${DATE_STAMP}_${BUILD_SHA7}_DB9"
     else
-        RBF_NAME="${CORE_NAME[i]}_${DATE_STAMP}_${BUILD_SHA7}.${FILE_EXT}"
+        RBF_NAME="${CORE_NAME[i]}_${DATE_STAMP}_${BUILD_SHA7}_DB9.${FILE_EXT}"
     fi
     echo
     echo "Building '${RBF_NAME}'..."
