@@ -27,7 +27,9 @@ sync_fork() {
         >&2 echo "[${fork_name}] malformed FORK_REPO '${FORK_REPO}'"
         return 1
     fi
-    local FORK_DISPATCH_URL="https://api.github.com/repos/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}/dispatches"
+    local OWNER="${BASH_REMATCH[3]}"
+    local NAME="${BASH_REMATCH[4]}"
+    local WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${OWNER}/${NAME}/actions/workflows/sync_release.yml/dispatches"
 
     local LOCAL_TMP=""
     trap '[[ -n "${LOCAL_TMP}" ]] && rm -rf "${LOCAL_TMP}" 2>/dev/null || true' RETURN
@@ -65,14 +67,18 @@ sync_fork() {
             echo "[${fork_name}] Release commit already in fork. No need to sync anything."
         else
             echo "[${fork_name}] Release commit wasn't found in fork."
-            echo "[${fork_name}] Sending sync request: POST ${FORK_DISPATCH_URL}"
+            # workflow_dispatch with explicit ref keeps variant branches on
+            # their configured MAIN_BRANCH. repository_dispatch only runs on
+            # the repo default branch, so non-default variants would execute
+            # stale/default-branch templated sync_release.sh values.
+            echo "[${fork_name}] Sending sync request: POST ${WORKFLOW_DISPATCH_URL} ref=${MAIN_BRANCH}"
             curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
                 --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
                 -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
-                -H "Accept: application/vnd.github.everest-preview+json" \
+                -H "Accept: application/vnd.github+json" \
                 -H "Content-Type: application/json" \
-                --data '{"event_type":"sync_release"}' \
-                "${FORK_DISPATCH_URL}"
+                --data "{\"ref\":\"${MAIN_BRANCH}\"}" \
+                "${WORKFLOW_DISPATCH_URL}"
             echo
             echo "[${fork_name}] Sync request sent successfully."
             popd > /dev/null
