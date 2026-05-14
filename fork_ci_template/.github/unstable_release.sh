@@ -148,7 +148,10 @@ UPLOAD_FILES=()
 
 for i in "${!CORE_NAME[@]}"; do
     FILE_EXT="${COMPILATION_OUTPUT[i]##*.}"
-    RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}.${FILE_EXT}"
+    # <Core>_unstable_YYYYMMDD_HHMM_<sha7>_DB9.<ext> — the trailing _DB9 marker
+    # mirrors the stable channel naming so every fork-built asset (stable or
+    # unstable) carries the fork provenance on GitHub Releases and on the SD card.
+    RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9.${FILE_EXT}"
     echo
     echo "Building '${RBF_NAME}'..."
     docker run --rm \
