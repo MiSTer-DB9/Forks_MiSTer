@@ -19,3 +19,4 @@ jobs:
       env:
         DISPATCH_USER: theypsilon
         DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        PARALLEL_JOBS: 16
