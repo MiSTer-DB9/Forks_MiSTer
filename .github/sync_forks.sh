@@ -17,6 +17,11 @@ sync_fork() {
     local FORK_REPO="$4"
     local MAIN_BRANCH="$5"
     local UPSTREAM_BRANCH="${6:-${MAIN_BRANCH}}"
+    # Variant-only fork sections (e.g. NeoGeo_24MHz_cpu_only with RELEASE_CORE_NAME
+    # carrying a variant suffix that upstream's releases/ dir never contains) need
+    # to grep upstream releases by the base core name. UPSTREAM_CORE_NAME defaults
+    # to CORE_LIST so base sections keep grepping by RELEASE_CORE_NAME unchanged.
+    local UPSTREAM_CORE_NAME="${7:-${CORE_LIST}}"
 
     if [[ -z "${UPSTREAM_REPO}" ]]; then
         echo "[${fork_name}] no UPSTREAM_REPO — skipping (fork-only core)"
@@ -47,7 +52,7 @@ sync_fork() {
         retry -- git -c protocol.version=1 fetch --no-tags --prune --no-recurse-submodules upstream
         git checkout -qf "remotes/upstream/${UPSTREAM_BRANCH}"
         local LAST_UPSTREAM_RELEASE
-        LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
+        LAST_UPSTREAM_RELEASE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
         echo "[${fork_name}] Found latest release: ${LAST_UPSTREAM_RELEASE}"
         local COMMIT_RELEASE
         COMMIT_RELEASE=$(git log -n 1 --pretty=format:%H -- "releases/${LAST_UPSTREAM_RELEASE}")
@@ -118,13 +123,14 @@ else
     # the xargs children.
     for fork_name in ${Forks[syncing_forks]}; do
         declare -n _fd="$fork_name"
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
             "$fork_name" \
             "${_fd[release_core_name]}" \
             "${_fd[upstream_repo]:-}" \
             "${_fd[fork_repo]}" \
             "${_fd[main_branch]}" \
-            "${_fd[upstream_branch]:-${_fd[main_branch]}}"
+            "${_fd[upstream_branch]:-${_fd[main_branch]}}" \
+            "${_fd[upstream_core_name]:-${_fd[release_core_name]}}"
         unset -n _fd
     done > "${RESULTS_DIR}/forks.nul"
 
@@ -133,14 +139,14 @@ else
 
     echo "Syncing START! (PARALLEL_JOBS=${PARALLEL_JOBS:-16})"
 
-    # shellcheck disable=SC2016 # $1..$6 inside the heredoc references xargs subshell args
-    xargs -0 -n 6 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
+    # shellcheck disable=SC2016 # $1..$7 inside the heredoc references xargs subshell args
+    xargs -0 -n 7 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
         bash -c '
             set -uo pipefail
             SAFE_NAME=$(printf "%s" "$1" | tr -c "[:alnum:]._-" "_")
             LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
             {
-                if ! sync_fork "$1" "$2" "$3" "$4" "$5" "$6"; then
+                if ! sync_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7"; then
                     echo "FORK FAILED: $1" >&2
                     printf "%s\n" "$1" > "${RESULTS_DIR}/${SAFE_NAME}.fail"
                 fi
