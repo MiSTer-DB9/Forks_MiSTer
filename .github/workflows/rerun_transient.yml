@@ -1,0 +1,39 @@
+name: Rerun Transient Failures
+
+# Watchdog cron: scan every fork in Forks.ini SYNCING_FORKS / UNSTABLE_FORKS
+# for recent failed Release / Unstable Release runs, classify each by log
+# signature, and `gh run rerun --failed` the ones whose failure looks like a
+# borked GitHub-hosted runner (ENOSPC, docker daemon unreachable, gh API 5xx,
+# runner preemption, ...). Real Quartus / merge / tripwire failures are left
+# alone — notify_error.sh has already emailed the maintainer.
+#
+# Cap is one rerun per run (gh run rerun bumps `.attempt`; we skip runs whose
+# attempt >= 2). Age cap is 6h — old failures stay buried.
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log decisions without actually rerunning'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: rerun_transient
+  cancel-in-progress: false
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Rerun transient failures
+      run: ./.github/rerun_transient.sh
+      env:
+        GH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
