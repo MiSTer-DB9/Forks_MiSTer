@@ -43,6 +43,15 @@ BUILD_SHA7="${BUILD_SHA:0:7}"
 # materialize MASTER_ROOT secret before build
 ./.github/materialize_secret.sh
 
+# Upstream case-mismatch shims (Linux-only failures). Each is gated on the
+# specific filename pair so it's a no-op for every other fork. Track via
+# https://github.com/MiSTer-devel/<fork>/issues so this list can shrink.
+#   - Arcade-TaitoSystemSJ_MiSTer: rtl/index.qip references "Mc68705p3.v" but
+#     the file is committed as rtl/mc68705p3.v.
+if [[ -f rtl/mc68705p3.v && ! -e rtl/Mc68705p3.v ]]; then
+    ln -s mc68705p3.v rtl/Mc68705p3.v
+fi
+
 if ! command -v gh >/dev/null 2>&1; then
     echo "::error::gh CLI missing — cannot publish stable release"
     exit 1
