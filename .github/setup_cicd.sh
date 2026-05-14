@@ -22,6 +22,10 @@ setup_cicd_on_fork() {
     # for HDL forks so their source_hash stays identical to pre-parameterisation
     # runs.
     local EXTRA_SOURCE_GLOBS="${10:-}"
+    # Upstream release-file grep pattern, parallel to RELEASE_CORE_NAME. Defaults
+    # to RELEASE_CORE_NAME via the aggregation below, overridden in Forks.ini for
+    # variant-only sections (e.g. NeoGeo_24MHz_cpu_only → NeoGeo).
+    local UPSTREAM_CORE_NAME="${11:-${RELEASE_CORE_NAME}}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -88,6 +92,7 @@ setup_cicd_on_fork() {
 
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
+        -e "s%<<UPSTREAM_CORE_NAME>>%${UPSTREAM_CORE_NAME}%g" \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
@@ -224,6 +229,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     unset -n _primary
 
     _RELEASE_CORE_NAMES=""
+    _UPSTREAM_CORE_NAMES=""
     _COMPILATION_INPUTS=""
     _COMPILATION_OUTPUTS=""
     # extra source-hash globs (per-section, optional).
@@ -236,12 +242,17 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     for _fn in "${_group[@]}"; do
         declare -n _fd="$_fn"
         _RELEASE_CORE_NAMES="${_RELEASE_CORE_NAMES:+${_RELEASE_CORE_NAMES} }${_fd[release_core_name]}"
+        # UPSTREAM_CORE_NAME parallels RELEASE_CORE_NAME element-by-element so the
+        # rendered template's UPSTREAM_CORE_NAME=(...) array stays the same length
+        # as CORE_NAME=(...). Default per-element to RELEASE_CORE_NAME so base
+        # sections behave exactly as before.
+        _UPSTREAM_CORE_NAMES="${_UPSTREAM_CORE_NAMES:+${_UPSTREAM_CORE_NAMES} }${_fd[upstream_core_name]:-${_fd[release_core_name]}}"
         _COMPILATION_INPUTS="${_COMPILATION_INPUTS:+${_COMPILATION_INPUTS} }${_fd[compilation_input]}"
         _COMPILATION_OUTPUTS="${_COMPILATION_OUTPUTS:+${_COMPILATION_OUTPUTS} }${_fd[compilation_output]}"
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -251,7 +262,8 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_COMPILATION_INPUTS" \
         "$_COMPILATION_OUTPUTS" \
         "$_MAINTAINER_EMAILS" \
-        "$_EXTRA_SOURCE_GLOBS"
+        "$_EXTRA_SOURCE_GLOBS" \
+        "$_UPSTREAM_CORE_NAMES"
 done > "${RESULTS_DIR}/groups.nul"
 
 export -f setup_cicd_on_fork retry
@@ -259,14 +271,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 10 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 11 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
             echo "Setting up CI/CD for $3 (cores: $1)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}"; then
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"; then
                 rc=0
             else
                 rc=$?

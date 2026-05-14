@@ -9,6 +9,11 @@ source "${SCRIPT_DIR}/retry.sh"
 
 UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
+# Upstream release-file grep pattern (per element of CORE_NAME). Same length as
+# CORE_NAME; for base sections this matches RELEASE_CORE_NAME, for variant-only
+# sections (e.g. NeoGeo_24MHz_cpu_only) it carries the base name that upstream's
+# releases/ actually contains.
+UPSTREAM_CORE_NAME=(<<UPSTREAM_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 UPSTREAM_BRANCH="<<UPSTREAM_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
@@ -27,12 +32,12 @@ git remote add upstream "${UPSTREAM_REPO}"
 retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
 git checkout -qf "remotes/upstream/${UPSTREAM_BRANCH}"
 
-NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
+NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
 COMMIT_TO_MERGE=$(git log -n 1 --pretty=format:%H -- "releases/${NEW_RELEASE_FILE}")
 
 UPSTREAM_CORE_FILES=()
 for i in "${!CORE_NAME[@]}"; do
-    UPSTREAM_CORE_FILES[i]=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
+    UPSTREAM_CORE_FILES[i]=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }')
 done
 
 export GIT_MERGE_AUTOEDIT=no
