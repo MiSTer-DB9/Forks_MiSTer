@@ -119,6 +119,9 @@ if [[ -n "${LAST_UPSTREAM_SHA}" && -n "${LAST_MASTER_SHA}" && -n "${LAST_BRANCH_
     BRANCH_HDL_DIFF=$(git diff --name-only "${LAST_BRANCH_SHA}..${UNSTABLE_BRANCH_SHA_BEFORE}" -- "${HDL_GLOBS[@]}" 2>/dev/null || echo NONEMPTY)
     if [[ -z "${UPSTREAM_HDL_DIFF}" && -z "${MASTER_HDL_DIFF}" && -z "${BRANCH_HDL_DIFF}" ]]; then
         echo "No HDL paths changed in upstream/master/unstable since last build (${LAST_UPSTREAM_SHA:0:7}/${LAST_MASTER_SHA:0:7}/${LAST_BRANCH_SHA:0:7}) — skipping merge + Quartus."
+        if [[ -z "${PREV_SOURCE_HASH}" ]]; then
+            PREV_SOURCE_HASH=$(compute_source_hash)
+        fi
         gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" \
             --notes "$(write_release_body "${UPSTREAM_SHA}" "${MASTER_SHA}" "${UNSTABLE_BRANCH_SHA_BEFORE}" "$(date -u +%Y%m%d_%H%M)" "${PREV_SOURCE_HASH}")"
         emit_skip true
