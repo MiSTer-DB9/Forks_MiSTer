@@ -40,3 +40,8 @@ jobs:
         # sync_release.sh materialises sys/db9_key_secret.vh from this env var
         # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # POST workflow_dispatch to release.yml after the merge push — default
+        # GITHUB_TOKEN pushes do not trigger downstream workflows. Same secret
+        # the Forks_MiSTer parent dispatchers use.
+        DISPATCH_USER: theypsilon
+        DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
