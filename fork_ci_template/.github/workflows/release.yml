@@ -20,6 +20,14 @@ on:
         required: false
         default: false
         type: boolean
+      upstream_release_sha:
+        description: "Upstream release commit SHA (from sync_release)"
+        required: false
+        default: ''
+      upstream_head_at_sync:
+        description: "Upstream HEAD at time of sync (from sync_release)"
+        required: false
+        default: ''
 
 permissions:
   contents: write   # gh release create / upload / delete-asset
@@ -65,5 +73,7 @@ jobs:
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
+        UPSTREAM_RELEASE_SHA: ${{ github.event.inputs.upstream_release_sha }}
+        UPSTREAM_HEAD_AT_SYNC: ${{ github.event.inputs.upstream_head_at_sync }}
         # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
