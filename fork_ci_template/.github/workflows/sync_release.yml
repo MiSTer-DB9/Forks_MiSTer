@@ -1,4 +1,4 @@
-name: Sync + Release
+name: Sync with upstream
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -9,6 +9,10 @@ on:
     types: [sync_release]
   workflow_dispatch:
 
+permissions:
+  contents: write   # git push of merge commit
+  actions: write    # POST workflow_dispatch to release.yml
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,32 +20,11 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    - name: Resolve Quartus image
-      id: image
-      run: |
-        first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
-        image=$(./.github/detect_quartus_image.sh "${first_input}")
-        echo "image=${image}" >> "$GITHUB_OUTPUT"
-        echo "Resolved Quartus image: ${image}"
-      env:
-        QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
-
-    - name: Cache & load Quartus image
-      uses: ./.github/actions/docker-cache-load
-      with:
-        image: ${{ steps.image.outputs.image }}
-
-    - name: Sync with upstream + Release
+    - name: Sync with upstream
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
-        QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
-        # key gate v1.5: MASTER_ROOT for SipHash MAC
-        # sync_release.sh materialises sys/db9_key_secret.vh from this env var
-        # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
-        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
         # POST workflow_dispatch to release.yml after the merge push — default
-        # GITHUB_TOKEN pushes do not trigger downstream workflows. Same secret
-        # the Forks_MiSTer parent dispatchers use.
-        DISPATCH_USER: theypsilon
-        DISPATCH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        # GITHUB_TOKEN pushes don't trigger downstream workflows (GH loop guard),
+        # but the workflow_dispatch *API* authenticated with GITHUB_TOKEN does.
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

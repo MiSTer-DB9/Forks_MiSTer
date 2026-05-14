@@ -18,7 +18,6 @@ MAIN_BRANCH="<<MAIN_BRANCH>>"
 UPSTREAM_BRANCH="<<UPSTREAM_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
-QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
 
 # fork-only cores have no upstream; sync_release is a no-op
 if [[ -z "${UPSTREAM_REPO}" ]]; then
@@ -126,13 +125,14 @@ retry -- git push origin "${MAIN_BRANCH}"
 # Trigger release.yml. The push above uses the default GITHUB_TOKEN, and GH
 # Actions deliberately doesn't trigger workflows from GITHUB_TOKEN pushes (loop
 # guard), so release.yml's `on: push` is structurally unreachable from here.
-# Mirrors sync_forks.sh which dispatches this script's workflow the same way.
+# But workflow_dispatch via API authenticated with GITHUB_TOKEN *does* fire
+# downstream runs (same-repo dispatch; cross-repo PAT not needed).
 WORKFLOW_DISPATCH_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches"
 echo
 echo "Triggering release.yml: POST ${WORKFLOW_DISPATCH_URL} ref=${MAIN_BRANCH}"
 curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
     --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
-    -u "${DISPATCH_USER}:${DISPATCH_TOKEN}" \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "Content-Type: application/json" \
     --data "{\"ref\":\"${MAIN_BRANCH}\"}" \
