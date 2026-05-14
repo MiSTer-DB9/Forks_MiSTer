@@ -63,3 +63,15 @@ jobs:
         # var before Quartus compile (identical handling to sync_release.yml).
         # 64 hex chars = 32 bytes. KEEP THIS SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+
+    - name: Upload Quartus reports
+      if: steps.preflight.outputs.skip != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: quartus-reports
+        path: |
+          output_files/*.sta.summary
+          output_files/*.sta.rpt
+          output_files/*.fit.summary
+
+        if-no-files-found: ignore

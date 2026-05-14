@@ -77,3 +77,15 @@ jobs:
         UPSTREAM_HEAD_AT_SYNC: ${{ github.event.inputs.upstream_head_at_sync }}
         # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+
+    - name: Upload Quartus reports
+      if: steps.preflight.outputs.skip != 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: quartus-reports
+        path: |
+          output_files/*.sta.summary
+          output_files/*.sta.rpt
+          output_files/*.fit.summary
+
+        if-no-files-found: ignore
