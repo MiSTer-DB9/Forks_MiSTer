@@ -29,6 +29,7 @@ echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
 git remote add upstream "${UPSTREAM_REPO}"
 retry -- git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules upstream
+UPSTREAM_HEAD_SHA=$(git rev-parse "remotes/upstream/${UPSTREAM_BRANCH}")
 git checkout -qf "remotes/upstream/${UPSTREAM_BRANCH}"
 
 # grep miss on releases/ → pipefail + set -e would abort the sync; tolerate
@@ -137,7 +138,7 @@ curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "Content-Type: application/json" \
-    --data "{\"ref\":\"${MAIN_BRANCH}\"}" \
+    --data "{\"ref\":\"${MAIN_BRANCH}\",\"inputs\":{\"upstream_release_sha\":\"${COMMIT_TO_MERGE}\",\"upstream_head_at_sync\":\"${UPSTREAM_HEAD_SHA}\"}}" \
     "${WORKFLOW_DISPATCH_URL}"
 echo
 echo "release.yml dispatch sent successfully."

@@ -109,10 +109,12 @@ release_body() {
     cat <<EOF
 Stable RBF build for \`${MAIN_BRANCH}\`. Retention: ${retention_label} per branch.
 
-branch:        ${MAIN_BRANCH}
-build_sha:     ${BUILD_SHA}
-build_ts:      ${TIMESTAMP}
-source_hash:   ${CURRENT_SOURCE_HASH}
+branch:                  ${MAIN_BRANCH}
+build_sha:               ${BUILD_SHA}
+build_ts:                ${TIMESTAMP}
+source_hash:             ${CURRENT_SOURCE_HASH}
+upstream_release_sha:    ${UPSTREAM_RELEASE_SHA:-}
+upstream_head_at_sync:   ${UPSTREAM_HEAD_AT_SYNC:-}
 EOF
 }
 
