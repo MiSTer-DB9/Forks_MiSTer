@@ -157,6 +157,20 @@ for r in sorted(releases, key=lambda x: x.get("created_at",""), reverse=True):
         return 1
     fi
 
+    # No stored SHA (migration) or different SHA — verify via compare API
+    # before dispatching. The release commit may already be in the fork even
+    # without the stored field (pre-migration releases).
+    local COMPARE_STATUS
+    COMPARE_STATUS=$(curl -fsSL \
+        -H "Authorization: token ${DISPATCH_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/compare/${CURRENT_RELEASE_SHA}...${MAIN_BRANCH}" 2>/dev/null \
+        | jq -r '.status // empty' 2>/dev/null || echo "")
+    if [[ "${COMPARE_STATUS}" == "ahead" || "${COMPARE_STATUS}" == "identical" ]]; then
+        echo "[${fork_name}] release commit ${CURRENT_RELEASE_SHA:0:7} already in fork — skipping"
+        return 1
+    fi
+
     echo "[${fork_name}] new release commit ${CURRENT_RELEASE_SHA:0:7} (was ${STORED_RELEASE_SHA:-none}) — dispatching"
     return 0
 }
