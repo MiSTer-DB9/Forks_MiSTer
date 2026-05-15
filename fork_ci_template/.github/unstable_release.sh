@@ -33,6 +33,8 @@ source "${SCRIPT_DIR}/retry.sh"
 source "${SCRIPT_DIR}/rerere_train.sh"
 # shellcheck source=compute_source_hash.sh
 source "${SCRIPT_DIR}/compute_source_hash.sh"
+# shellcheck source=quartus_build.sh
+source "${SCRIPT_DIR}/quartus_build.sh"
 
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
@@ -42,14 +44,7 @@ COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
 # Native path: QUARTUS_NATIVE_VERSION (resolved std key) + QUARTUS_NATIVE_HOME
 # (/opt/intelFPGA/<ver>, exported by the quartus-install-cache action). Exactly
 # one path is active per build; require at least one to be set.
-QUARTUS_IMAGE="${QUARTUS_IMAGE:-}"
-QUARTUS_NATIVE_VERSION="${QUARTUS_NATIVE_VERSION:-}"
-QUARTUS_NATIVE_HOME="${QUARTUS_NATIVE_HOME:-}"
-if [[ -z "${QUARTUS_NATIVE_VERSION}" && -z "${QUARTUS_IMAGE}" ]]; then
-    echo "::error::neither QUARTUS_IMAGE nor QUARTUS_NATIVE_VERSION set"
-    exit 1
-fi
-GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
+resolve_quartus_env
 
 # UNSTABLE_TAG / UNSTABLE_BRANCH / RETENTION + write_release_body shared with
 # unstable_preflight.sh; depends on MAIN_BRANCH already being set.
@@ -101,22 +96,9 @@ fi
 # materialize MASTER_ROOT secret before build
 ./.github/materialize_secret.sh
 
-# Upstream case-mismatch shims (Linux-only failures). Each is gated on the
-# specific filename pair so it's a no-op for every other fork. Track via
-# https://github.com/MiSTer-devel/<fork>/issues so this list can shrink.
-#   - Arcade-TaitoSystemSJ_MiSTer: rtl/index.qip references "Mc68705p3.v" but
-#     the file is committed as rtl/mc68705p3.v.
-if [[ -f rtl/mc68705p3.v && ! -e rtl/Mc68705p3.v ]]; then
-    ln -s mc68705p3.v rtl/Mc68705p3.v
-fi
+quartus_build_preflight
 
 # ----- Source-hash diff-skip + Quartus build + release upload -----
-
-# gh is preinstalled on ubuntu-latest; quick sanity.
-if ! command -v gh >/dev/null 2>&1; then
-    echo "::error::gh CLI missing — cannot reach unstable-builds release"
-    exit 1
-fi
 
 CURRENT_SOURCE_HASH=$(compute_source_hash)
 echo "Source hash: ${CURRENT_SOURCE_HASH}"
@@ -146,85 +128,7 @@ RELEASE_EXISTS=1
 TIMESTAMP=$(date -u +%Y%m%d_%H%M)
 UPLOAD_FILES=()
 
-for i in "${!CORE_NAME[@]}"; do
-    FILE_EXT="${COMPILATION_OUTPUT[i]##*.}"
-    # <Core>_unstable_YYYYMMDD_HHMM_<sha7>_DB9.<ext> — the trailing _DB9 marker
-    # mirrors the stable channel naming so every fork-built asset (stable or
-    # unstable) carries the fork provenance on GitHub Releases and on the SD card.
-    # Main_MiSTer ships bin/MiSTer with no extension; ##*.* returns the whole
-    # path → drop the dot suffix so cp lands on the right file. Same guard
-    # lives in stable release.sh.
-    if [[ "${FILE_EXT}" == "${COMPILATION_OUTPUT[i]}" ]]; then
-        RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9"
-    else
-        RBF_NAME="${CORE_NAME[i]}_unstable_${TIMESTAMP}_${UPSTREAM_SHA7}_DB9.${FILE_EXT}"
-    fi
-    echo
-    echo "Building '${RBF_NAME}'..."
-    if [[ -n "${QUARTUS_NATIVE_VERSION}" ]]; then
-        # Native Quartus *Standard* in a stock ubuntu:24.04 container
-        # ONLY so `--mac-address` puts the license node-lock MAC on the
-        # container's eth0 (FlexLM hostid = its netns primary iface); host
-        # NIC untouched so Azure anti-spoof never severs the runner.
-        # Quartus 17's bundled quartus/linux64 still needs a handful of
-        # system X/glib/font libs (validated set below; libstdc++6/zlib1g
-        # already in the base, libpng/libncurses shimmed in-tree by
-        # --fix-libpng/--fix-libncurses). Its bundled 2017 libudev.so.1
-        # segfaults against glibc 2.39 with no in-container udevd
-        # (FlexLM hostid scan), so LD_PRELOAD the modern system libudev.
-        # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
-        # One apt per native build (~25 s) is negligible vs the Quartus
-        # run; inline avoids a custom image / GHCR / registry to maintain.
-        QRT_IMG="ubuntu:24.04"
-        QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
-        LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
-        # Re-derive the node-lock MAC from the license file itself (the
-        # single source of truth — no $GITHUB_ENV/sidecar to leak it in a
-        # later step's env: log group). Already ::add-mask::ed by
-        # materialize_quartus_license.sh; re-mask defensively. Never echo.
-        NODELOCK_MAC="$(grep -ioE 'HOSTID=[0-9A-Fa-f]{12}' "${LM_LICENSE_FILE}" \
-            | head -1 | sed 's/.*=//' | tr 'A-Z' 'a-z' \
-            | sed -E 's/(..)(..)(..)(..)(..)(..)/\1:\2:\3:\4:\5:\6/')"
-        if [[ ! "${NODELOCK_MAC}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
-            echo "::error::could not derive node-lock MAC from license"; exit 1
-        fi
-        echo "::add-mask::${NODELOCK_MAC}"
-        retry -- docker pull "${QRT_IMG}"
-        docker run --rm \
-            --mac-address "${NODELOCK_MAC}" \
-            -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro" \
-            -v "$(pwd):/project" -w /project \
-            -v "${LIC_DIR}:${LIC_DIR}:ro" \
-            -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}" \
-            -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}" \
-            -e "HOME=/tmp" \
-            -e "QRT_PKGS=${QRT_PKGS}" \
-            -e "QNH=${QUARTUS_NATIVE_HOME}" \
-            -e "QIN=${COMPILATION_INPUT[i]}" \
-            "${QRT_IMG}" \
-            bash -c 'set -e
-                export DEBIAN_FRONTEND=noninteractive
-                apt-get update -qq
-                apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
-                export LD_PRELOAD="$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)"
-                exec "${QNH}/quartus/bin/quartus_sh" --flow compile "${QIN}"' \
-            || ./.github/notify_error.sh "UNSTABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${UPSTREAM_SHA7})" "$@"
-    else
-        docker run --rm \
-            -v "$(pwd):/project" \
-            -e "COMPILATION_INPUT=${COMPILATION_INPUT[i]}" \
-            "${QUARTUS_IMAGE}" \
-            bash -c 'cd /project && /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile "${COMPILATION_INPUT}"' \
-            || ./.github/notify_error.sh "UNSTABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${UPSTREAM_SHA7})" "$@"
-    fi
-
-    if [[ ! -f "${COMPILATION_OUTPUT[i]}" ]]; then
-        echo "::error::Build succeeded but ${COMPILATION_OUTPUT[i]} missing"
-        exit 1
-    fi
-    cp "${COMPILATION_OUTPUT[i]}" "/tmp/${RBF_NAME}"
-    UPLOAD_FILES+=("/tmp/${RBF_NAME}")
-done
+build_cores UNSTABLE "unstable_${TIMESTAMP}_${UPSTREAM_SHA7}" -- "$@"
 
 # Upload first, then prune. Order matters: pruning before upload would briefly
 # expose a zero-asset release window to Distribution_MiSTer's 20-min cron.

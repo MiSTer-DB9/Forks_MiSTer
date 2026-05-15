@@ -80,12 +80,8 @@ fi
 # it would otherwise surface (step env: renders, set -x, diagnostics).
 echo "::add-mask::${MAC_COLON}"
 
-# No NIC is created or changed here. FlexLM reads ONE hostid = the primary
-# iface MAC. The host primary MAC must NOT change on a GitHub-hosted runner
-# (Azure VNet anti-spoof drops mismatched frames → runner network dies).
-# Instead the build step runs quartus_sh inside `docker run --mac-address
-# <license MAC>`: the container's eth0 IS its netns primary iface, carries
-# the license MAC, host NIC untouched.
+# No NIC is created or changed here (see header: the MAC goes onto the
+# build container's eth0 via `docker run --mac-address`, not a host NIC).
 
 # Non-secret diagnostic: the license FEATURE/version (never the SIGN=).
 echo "--- license FEATURE/INCREMENT (name vendor version only) ---"
