@@ -17,7 +17,17 @@ CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
-QUARTUS_IMAGE="${QUARTUS_IMAGE:?QUARTUS_IMAGE env not set — populated by workflow Resolve-Quartus-image step}"
+# Docker path: QUARTUS_IMAGE from the workflow's Resolve-Quartus-image step.
+# Native path: QUARTUS_NATIVE_VERSION (resolved std key) + QUARTUS_NATIVE_HOME
+# (/opt/intelFPGA/<ver>, exported by the quartus-install-cache action). Exactly
+# one path is active per build; require at least one to be set.
+QUARTUS_IMAGE="${QUARTUS_IMAGE:-}"
+QUARTUS_NATIVE_VERSION="${QUARTUS_NATIVE_VERSION:-}"
+QUARTUS_NATIVE_HOME="${QUARTUS_NATIVE_HOME:-}"
+if [[ -z "${QUARTUS_NATIVE_VERSION}" && -z "${QUARTUS_IMAGE}" ]]; then
+    echo "::error::neither QUARTUS_IMAGE nor QUARTUS_NATIVE_VERSION set"
+    exit 1
+fi
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
 
 TAG_PREFIX="stable/${MAIN_BRANCH}/"
@@ -82,12 +92,19 @@ for i in "${!CORE_NAME[@]}"; do
     fi
     echo
     echo "Building '${RBF_NAME}'..."
-    docker run --rm \
-        -v "$(pwd):/project" \
-        -e "COMPILATION_INPUT=${COMPILATION_INPUT[i]}" \
-        "${QUARTUS_IMAGE}" \
-        bash -c 'cd /project && /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile "${COMPILATION_INPUT}"' \
-        || ./.github/notify_error.sh "STABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${BUILD_SHA7})" "$@"
+    if [[ -n "${QUARTUS_NATIVE_VERSION}" ]]; then
+        # Native Quartus Standard. cwd is the repo (no -v mount); LM_LICENSE_FILE
+        # is inherited from env (exported by the workflow's license step).
+        "${QUARTUS_NATIVE_HOME}/quartus/bin/quartus_sh" --flow compile "${COMPILATION_INPUT[i]}" \
+            || ./.github/notify_error.sh "STABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${BUILD_SHA7})" "$@"
+    else
+        docker run --rm \
+            -v "$(pwd):/project" \
+            -e "COMPILATION_INPUT=${COMPILATION_INPUT[i]}" \
+            "${QUARTUS_IMAGE}" \
+            bash -c 'cd /project && /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile "${COMPILATION_INPUT}"' \
+            || ./.github/notify_error.sh "STABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${BUILD_SHA7})" "$@"
+    fi
 
     if [[ ! -f "${COMPILATION_OUTPUT[i]}" ]]; then
         echo "::error::Build succeeded but ${COMPILATION_OUTPUT[i]} missing"

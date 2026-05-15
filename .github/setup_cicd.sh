@@ -7,6 +7,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/retry.sh
 source "${SCRIPT_DIR}/lib/retry.sh"
 
+# Native Quartus path: the quartus-install repo cloned on a cache miss. Global
+# (not per-fork) — pinned to the maintainer fork that carries the 17.0.2
+# update_1 entry. Overridable via env for testing.
+QUARTUS_INSTALL_REPO="${QUARTUS_INSTALL_REPO:-https://github.com/drizzt/quartus-install.git}"
+
 setup_cicd_on_fork() {
     local RELEASE_CORE_NAME="$1"
     local UPSTREAM_REPO="$2"
@@ -26,6 +31,10 @@ setup_cicd_on_fork() {
     # to RELEASE_CORE_NAME via the aggregation below, overridden in Forks.ini for
     # variant-only sections (e.g. NeoGeo_24MHz_cpu_only → NeoGeo).
     local UPSTREAM_CORE_NAME="${11:-${RELEASE_CORE_NAME}}"
+    # Optional per-section native Quartus Standard opt-in (quartus-install.py
+    # version key, e.g. "17.0std", or "auto" to derive from the qsf). Empty for
+    # every fork except the pilot → docker Quartus Lite path stays unchanged.
+    local QUARTUS_NATIVE="${12:-}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -121,6 +130,8 @@ setup_cicd_on_fork() {
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
+        -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         ${TEMP_DIR}/.github/workflows/unstable_release.yml
 
     # stable channel templating (release.{sh,yml} + preflight skip)
@@ -137,6 +148,8 @@ setup_cicd_on_fork() {
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
+        -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
+        -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         ${TEMP_DIR}/.github/workflows/release.yml
 
@@ -225,6 +238,10 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     # primary wins (same rule as UPSTREAM_REPO above).
     _UPSTREAM_BRANCH="${_primary[upstream_branch]:-${_primary[main_branch]}}"
     _QUARTUS_IMAGE="${_primary[quartus_image]:-}"
+    # Native Quartus Standard opt-in (per-section, optional). Empty for all but
+    # the pilot fork; siblings sharing a repo follow the primary like
+    # QUARTUS_IMAGE above.
+    _QUARTUS_NATIVE="${_primary[quartus_native]:-}"
     _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
     unset -n _primary
 
@@ -252,7 +269,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -263,22 +280,23 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_COMPILATION_OUTPUTS" \
         "$_MAINTAINER_EMAILS" \
         "$_EXTRA_SOURCE_GLOBS" \
-        "$_UPSTREAM_CORE_NAMES"
+        "$_UPSTREAM_CORE_NAMES" \
+        "$_QUARTUS_NATIVE"
 done > "${RESULTS_DIR}/groups.nul"
 
 export -f setup_cicd_on_fork retry
-export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR
+export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR QUARTUS_INSTALL_REPO
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 11 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 12 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
             echo "Setting up CI/CD for $3 (cores: $1)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"; then
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}"; then
                 rc=0
             else
                 rc=$?
