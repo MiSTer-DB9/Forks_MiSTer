@@ -64,57 +64,25 @@ if [[ ! "${MAC_COLON}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
     exit 1
 fi
 
-# Create the node-locked NIC FlexLM's lmhostid will enumerate. A standalone
-# `dummy` iface works on a normal host but is unreliably enumerated on
-# GitHub-hosted runners (validated locally: same MAC+IP+up compiles fine;
-# CI still 292028s). A `macvlan` on top of the runner's real default-route
-# interface is a first-class Ethernet device that FlexLM enumerates
-# reliably, and the parent NIC keeps working so the release upload still
-# functions. Idempotent within a job (concurrency pins one runner).
-PARENT_IF=$(ip -o route show default 2>/dev/null \
-    | grep -oE 'dev [^ ]+' | head -1 | awk '{print $2}')
-if [[ -z "${PARENT_IF}" ]]; then
-    echo "::error::could not determine default-route interface for macvlan parent"
-    exit 1
-fi
-if ! ip link show ql_lic >/dev/null 2>&1; then
-    sudo ip link add ql_lic link "${PARENT_IF}" address "${MAC_COLON}" type macvlan mode bridge
-else
-    sudo ip link set ql_lic address "${MAC_COLON}"
-fi
-# Kill IPv6 on the spoof iface BEFORE it goes up: SLAAC would derive a
-# fe80::/64 link-local from the MAC via EUI-64, which is trivially
-# reversible and would leak the node-lock MAC into the public CI log.
-sudo ip link set dev ql_lic addrgenmode none 2>/dev/null || true
-sudo sysctl -qw "net.ipv6.conf.ql_lic.disable_ipv6=1" 2>/dev/null || true
-# FlexLM's lmhostid enumerates via SIOCGIFCONF, which only returns
-# interfaces that carry an address; give it a throwaway TEST-NET-1
-# (RFC 5737) IPv4 so it is enumerated.
-sudo ip addr add 192.0.2.7/24 dev ql_lic 2>/dev/null || true
-sudo ip link set ql_lic up
-echo "ql_lic (macvlan) up with node-locked MAC (masked)"
+# No NIC is created here. Altera/Intel FlexLM derives ONE ethernet hostid =
+# the *primary* interface MAC and never enumerates secondary interfaces, so
+# a dummy/macvlan carrying the licensed MAC is ignored (confirmed: `lmutil
+# lmhostid` only ever reports the primary MAC). The only spoof FlexLM
+# honours is changing the primary interface's own MAC — and that must NOT
+# happen here: this step runs before the cache-restore/install step, which
+# needs working networking. The actual swap is done by with_nodelock_mac.sh
+# wrapping just the quartus_sh compile in the build step, then restored so
+# the release upload still works. Here we only export the derived MAC.
 
-# Non-secret diagnostics only: IPv4 state (never inet6 — that would carry
-# the EUI-64), MAC always masked, and the license FEATURE/version (never
-# the SIGN=). Enough to compare against a 292028 without leaking anything.
-echo "--- ql_lic state (IPv4 only) ---"
-ip -br link show ql_lic 2>/dev/null | sed 's/[0-9a-f:]\{17\}/<mac>/g' || true
-ip -4 -br addr show ql_lic 2>/dev/null || true
-LMUTIL="${QUARTUS_NATIVE_HOME:-}/quartus/linux64/lmutil"
-if [[ -x "${LMUTIL}" ]]; then
-    # Boolean only — never print the hostid list (public repo).
-    if "${LMUTIL}" lmhostid -ether 2>/dev/null \
-            | tr 'A-Z' 'a-z' | tr -d ':-' | grep -qF "${RAW_MAC,,}"; then
-        echo "lmhostid: spoofed node-lock hostid IS visible to FlexLM (good)"
-    else
-        echo "lmhostid: spoofed node-lock hostid NOT visible to FlexLM"
-    fi
-fi
+# Non-secret diagnostic: the license FEATURE/version (never the SIGN=).
 echo "--- license FEATURE/INCREMENT (name vendor version only) ---"
 grep -oE '^[[:space:]]*(FEATURE|INCREMENT)[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+' \
     "${LIC_FILE}" 2>/dev/null | head -20 || echo "(none parsed)"
 
+# QUARTUS_NODELOCK_MAC is consumed by with_nodelock_mac.sh in the build
+# step. It is the license node-lock MAC — treat as sensitive: never echo it.
 {
     echo "LM_LICENSE_FILE=${LIC_FILE}"
     echo "ALTERA_LICENSE_FILE=${LIC_FILE}"
+    echo "QUARTUS_NODELOCK_MAC=${MAC_COLON}"
 } >> "${GITHUB_ENV:?GITHUB_ENV not set — this script must run as a workflow step}"
