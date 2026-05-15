@@ -109,10 +109,20 @@ for i in "${!CORE_NAME[@]}"; do
         QRT_IMG="ubuntu:24.04"
         QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
         LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
+        # Re-derive the node-lock MAC from the license file itself (the
+        # single source of truth — no $GITHUB_ENV/sidecar to leak it in a
+        # later step's env: log group). Already ::add-mask::ed by
+        # materialize_quartus_license.sh; re-mask defensively. Never echo.
+        NODELOCK_MAC="$(grep -ioE 'HOSTID=[0-9A-Fa-f]{12}' "${LM_LICENSE_FILE}" \
+            | head -1 | sed 's/.*=//' | tr 'A-Z' 'a-z' \
+            | sed -E 's/(..)(..)(..)(..)(..)(..)/\1:\2:\3:\4:\5:\6/')"
+        if [[ ! "${NODELOCK_MAC}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
+            echo "::error::could not derive node-lock MAC from license"; exit 1
+        fi
+        echo "::add-mask::${NODELOCK_MAC}"
         retry -- docker pull "${QRT_IMG}"
-        # QUARTUS_NODELOCK_MAC is the license hostid — never echoed.
         docker run --rm \
-            --mac-address "${QUARTUS_NODELOCK_MAC}" \
+            --mac-address "${NODELOCK_MAC}" \
             -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro" \
             -v "$(pwd):/project" -w /project \
             -v "${LIC_DIR}:${LIC_DIR}:ro" \
