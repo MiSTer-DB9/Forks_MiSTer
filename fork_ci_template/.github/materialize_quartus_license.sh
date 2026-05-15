@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Materialize the Quartus Standard FlexLM license + create the node-locked NIC
-# so `quartus_sh` can check out the license on an ephemeral runner.
+# Materialize the Quartus Standard FlexLM license and derive the node-lock
+# MAC so `quartus_sh` can check out the license on an ephemeral runner.
 #
-# Run as a dedicated WORKFLOW step (not from release.sh): it needs `sudo ip
-# link` before the build and must export LM_LICENSE_FILE via $GITHUB_ENV so the
-# later build step inherits it.
+# No NIC is touched here. The build step runs quartus_sh inside the GHCR
+# runtime sandbox with `docker run --mac-address ${QUARTUS_NODELOCK_MAC}`,
+# which puts the license hostid on the container's eth0 in its own netns
+# (FlexLM derives its ethernet hostid from the primary iface MAC = that
+# spoofed eth0) while leaving the host NIC alone, so Azure VNet anti-spoof
+# never severs the runner.
+#
+# Run as a dedicated WORKFLOW step (not from release.sh): it must export
+# LM_LICENSE_FILE / QUARTUS_NODELOCK_MAC via $GITHUB_ENV so the later build
+# step inherits them.
 #
 # Unlike materialize_secret.sh (DB9 key gate degrades to "locked" when the
 # secret is missing), a missing Quartus license means Standard cannot compile
@@ -18,10 +25,11 @@
 #   QUARTUS_LICENSE_MAC  optional override (aa:bb:cc:dd:ee:ff or 12 hex). Only
 #                        set this if the license format defeats auto-derivation.
 #
-# FlexLM caveat: Altera/Intel `lmutil lmhostid` enumerates ALL interface
-# hwaddrs, incl. `dummy`-type, as long as the iface is UP — so a dummy iface
-# carrying the licensed MAC satisfies the node-lock. The iface is brought up
-# here, before the build step, within the same job.
+# FlexLM caveat: Altera/Intel `lmutil lmhostid` reports exactly ONE
+# ethernet hostid = the *primary* interface MAC; it does NOT enumerate
+# dummy/macvlan/secondary ifaces (verified). So the only spoof it honours
+# is the primary iface's own MAC — which is why the build runs inside a
+# container whose eth0 is the primary iface and is set via --mac-address.
 
 set -euo pipefail
 
@@ -64,15 +72,13 @@ if [[ ! "${MAC_COLON}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
     exit 1
 fi
 
-# No NIC is created here. Altera/Intel FlexLM derives ONE ethernet hostid =
-# the *primary* interface MAC and never enumerates secondary interfaces, so
-# a dummy/macvlan carrying the licensed MAC is ignored (confirmed: `lmutil
-# lmhostid` only ever reports the primary MAC). The only spoof FlexLM
-# honours is changing the primary interface's own MAC — and that must NOT
-# happen here: this step runs before the cache-restore/install step, which
-# needs working networking. The actual swap is done by with_nodelock_mac.sh
-# wrapping just the quartus_sh compile in the build step, then restored so
-# the release upload still works. Here we only export the derived MAC.
+# No NIC is created or changed here. FlexLM reads ONE hostid = the primary
+# iface MAC. The host primary MAC must NOT change on a GitHub-hosted runner
+# (Azure VNet anti-spoof drops mismatched frames → runner network dies).
+# Instead the build step runs quartus_sh inside `docker run --mac-address
+# ${QUARTUS_NODELOCK_MAC}`: the container's eth0 IS its netns primary iface,
+# carries the license MAC, and the host NIC stays untouched. Here we only
+# derive and export the MAC for that docker invocation.
 
 # Non-secret diagnostic: the license FEATURE/version (never the SIGN=).
 echo "--- license FEATURE/INCREMENT (name vendor version only) ---"

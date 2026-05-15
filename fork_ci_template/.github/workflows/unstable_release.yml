@@ -70,7 +70,7 @@ jobs:
       with:
         image: ${{ steps.image.outputs.image }}
 
-    - name: Quartus license + MAC spoof
+    - name: Quartus license
       if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native == 'true'
       run: ./.github/materialize_quartus_license.sh
       env:

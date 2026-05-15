@@ -162,12 +162,26 @@ for i in "${!CORE_NAME[@]}"; do
     echo
     echo "Building '${RBF_NAME}'..."
     if [[ -n "${QUARTUS_NATIVE_VERSION}" ]]; then
-        # Native Quartus Standard. cwd is the repo (no -v mount);
-        # LM_LICENSE_FILE is inherited from env (exported by the license
-        # step). with_nodelock_mac.sh swaps the primary NIC MAC to the
-        # license hostid for just this checkout (FlexLM only reads the
-        # primary MAC), restoring it after so the release upload works.
-        ./.github/with_nodelock_mac.sh \
+        # Native Quartus *Standard* in a stock ubuntu:24.04 container
+        # ONLY so `--mac-address` puts the license node-lock MAC on the
+        # container's eth0 (FlexLM hostid = its netns primary iface); host
+        # NIC untouched so Azure anti-spoof never severs the runner. Quartus
+        # is self-contained vs its bind-mounted bundled linux64 + glibc
+        # (--fix-libpng/--fix-libncurses shimmed in-tree at install).
+        # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
+        QRT_IMG="ubuntu:24.04"
+        LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
+        retry -- docker pull "${QRT_IMG}"
+        # QUARTUS_NODELOCK_MAC is the license hostid — never echoed.
+        docker run --rm \
+            --mac-address "${QUARTUS_NODELOCK_MAC}" \
+            -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro" \
+            -v "$(pwd):/project" -w /project \
+            -v "${LIC_DIR}:${LIC_DIR}:ro" \
+            -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}" \
+            -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}" \
+            -e "HOME=/tmp" \
+            "${QRT_IMG}" \
             "${QUARTUS_NATIVE_HOME}/quartus/bin/quartus_sh" --flow compile "${COMPILATION_INPUT[i]}" \
             || ./.github/notify_error.sh "UNSTABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${UPSTREAM_SHA7})" "$@"
     else
