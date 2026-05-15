@@ -106,14 +106,25 @@ _check_stable() {
         "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/releases?per_page=100" 2>/dev/null || echo "")
     if [[ -n "${RELEASE_JSON}" ]]; then
         local RELEASE_BODY
+        # Pick the newest tag-prefix release whose body carries a populated
+        # upstream_head_at_sync: — push-triggered release.yml runs (BOT CI/CD
+        # setup commits, direct DB9 commits) can create a newer stable release
+        # with blank upstream_* lines; reading those would defeat the fast
+        # path. Fall back to the newest body when none qualify (pre-migration
+        # releases predate the field entirely; compare-API path takes over).
         RELEASE_BODY=$(printf '%s' "${RELEASE_JSON}" | TAG_PREFIX="${TAG_PREFIX}" python3 -c '
-import json, sys, os
+import json, sys, os, re
 releases = json.load(sys.stdin)
 prefix = os.environ["TAG_PREFIX"]
-for r in sorted(releases, key=lambda x: x.get("created_at",""), reverse=True):
-    if r.get("tag_name","").startswith(prefix):
+matched = [r for r in sorted(releases, key=lambda x: x.get("created_at",""), reverse=True)
+           if r.get("tag_name","").startswith(prefix)]
+head_re = re.compile(r"^upstream_head_at_sync:\s*(\S+)", re.MULTILINE)
+for r in matched:
+    if head_re.search(r.get("body","") or ""):
         print(r.get("body",""))
         sys.exit(0)
+if matched:
+    print(matched[0].get("body",""))
 ' 2>/dev/null || echo "")
         if [[ -n "${RELEASE_BODY}" ]]; then
             STORED_RELEASE_SHA=$(sed -nE 's/^upstream_release_sha:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${RELEASE_BODY}" | head -1 || true)

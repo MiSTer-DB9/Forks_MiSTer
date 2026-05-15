@@ -157,6 +157,48 @@ for i in "${!CORE_NAME[@]}"; do
     UPLOAD_FILES+=("/tmp/${RBF_NAME}")
 done
 
+# Provenance inheritance for push-triggered runs.
+#
+# release.yml fires on both `workflow_dispatch` (from sync_release.sh, which
+# passes upstream_release_sha/upstream_head_at_sync) and `on: push` (BOT CI/CD
+# setup commits, direct DB9 commits). On a push run github.event.inputs.* are
+# empty, so without this block the body would record blank upstream_* lines and
+# sync_dispatch.sh's _check_stable fast path would be defeated whenever the
+# newest stable/<branch>/ release is a push build.
+#
+# A push commit (DB9/CI change) does not merge upstream, so the upstream
+# release commit and upstream HEAD as of the last sync are unchanged by it —
+# inheriting the most recent populated values is accurate. Inheriting a stale
+# upstream_head_at_sync stays safe for the consumer: _check_stable only skips
+# when STORED_HEAD == current upstream HEAD, and a DB9-only push cannot move
+# upstream HEAD, so that equality only holds when skipping is genuinely correct.
+#
+# Only fill when empty — a real sync value from the dispatch inputs is never
+# overwritten. Two-step lookup mirrors preflight_skip.sh (gh release list
+# --json has no `body`; fetch tags newest-first, then gh release view each
+# until one yields a non-empty upstream_head_at_sync:).
+if [[ -z "${UPSTREAM_RELEASE_SHA:-}" || -z "${UPSTREAM_HEAD_AT_SYNC:-}" ]]; then
+    mapfile -t PREV_TAGS < <(
+        gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
+            --exclude-drafts \
+            --json tagName,createdAt \
+            --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[].tagName" \
+            2>/dev/null || true
+    )
+    for _ptag in "${PREV_TAGS[@]}"; do
+        _pbody=$(gh release view "${_ptag}" --repo "${GITHUB_REPOSITORY}" \
+            --json body --jq '.body' 2>/dev/null || echo "")
+        [[ -z "${_pbody}" ]] && continue
+        _phead=$(sed -nE 's/^upstream_head_at_sync:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${_pbody}" | head -1 || true)
+        [[ -z "${_phead}" ]] && continue
+        _prel=$(sed -nE 's/^upstream_release_sha:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${_pbody}" | head -1 || true)
+        : "${UPSTREAM_RELEASE_SHA:=${_prel}}"
+        : "${UPSTREAM_HEAD_AT_SYNC:=${_phead}}"
+        echo "Inherited upstream provenance from ${_ptag}: release=${UPSTREAM_RELEASE_SHA:-<none>} head=${UPSTREAM_HEAD_AT_SYNC:-<none>}"
+        break
+    done
+fi
+
 # Body is flat: one build, one release, one set of metadata. `source_hash:` is
 # the contract with the next run's skip lookup.
 release_body() {
