@@ -162,9 +162,13 @@ for i in "${!CORE_NAME[@]}"; do
     echo
     echo "Building '${RBF_NAME}'..."
     if [[ -n "${QUARTUS_NATIVE_VERSION}" ]]; then
-        # Native Quartus Standard. cwd is the repo (no -v mount); LM_LICENSE_FILE
-        # is inherited from env (exported by the workflow's license step).
-        "${QUARTUS_NATIVE_HOME}/quartus/bin/quartus_sh" --flow compile "${COMPILATION_INPUT[i]}" \
+        # Native Quartus Standard. cwd is the repo (no -v mount);
+        # LM_LICENSE_FILE is inherited from env (exported by the license
+        # step). with_nodelock_mac.sh swaps the primary NIC MAC to the
+        # license hostid for just this checkout (FlexLM only reads the
+        # primary MAC), restoring it after so the release upload works.
+        ./.github/with_nodelock_mac.sh \
+            "${QUARTUS_NATIVE_HOME}/quartus/bin/quartus_sh" --flow compile "${COMPILATION_INPUT[i]}" \
             || ./.github/notify_error.sh "UNSTABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${UPSTREAM_SHA7})" "$@"
     else
         docker run --rm \
