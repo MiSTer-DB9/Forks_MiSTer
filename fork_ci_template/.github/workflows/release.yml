@@ -48,8 +48,27 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
 
-    - name: Resolve Quartus image
+    # Native (Quartus Standard) vs docker (Quartus Lite) is a per-fork opt-in:
+    # `<<QUARTUS_NATIVE>>` is empty for every fork except the pilot, so the
+    # else-branch keeps the docker path byte-identical for all others.
+    - name: Resolve build mode
       if: steps.preflight.outputs.skip != 'true'
+      id: mode
+      run: |
+        native='<<QUARTUS_NATIVE>>'
+        if [ -n "${native}" ]; then
+          first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
+          ver=$(QUARTUS_NATIVE_OVERRIDE="${native}" ./.github/detect_quartus_version.sh "${first_input}")
+          echo "native=true"    >> "$GITHUB_OUTPUT"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "Native Quartus Standard build: ${ver}"
+        else
+          echo "native=false" >> "$GITHUB_OUTPUT"
+          echo "Docker Quartus Lite build"
+        fi
+
+    - name: Resolve Quartus image
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native != 'true'
       id: image
       run: |
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
@@ -60,10 +79,25 @@ jobs:
         QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
 
     - name: Cache & load Quartus image
-      if: steps.preflight.outputs.skip != 'true'
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native != 'true'
       uses: ./.github/actions/docker-cache-load
       with:
         image: ${{ steps.image.outputs.image }}
+
+    - name: Quartus license + MAC spoof
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native == 'true'
+      run: ./.github/materialize_quartus_license.sh
+      env:
+        QUARTUS_LICENSE: ${{ secrets.QUARTUS_LICENSE }}
+        QUARTUS_LICENSE_MAC: ${{ secrets.QUARTUS_LICENSE_MAC }}
+
+    - name: Cache & install native Quartus
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native == 'true'
+      uses: ./.github/actions/quartus-install-cache
+      with:
+        version: ${{ steps.mode.outputs.version }}
+        device: c5
+        install-repo: <<QUARTUS_INSTALL_REPO>>
 
     - name: Build stable RBF from fork HEAD
       if: steps.preflight.outputs.skip != 'true'
@@ -71,6 +105,8 @@ jobs:
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
+        QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.native == 'true' && steps.mode.outputs.version || '' }}
+        QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
         UPSTREAM_RELEASE_SHA: ${{ github.event.inputs.upstream_release_sha }}

@@ -1,0 +1,70 @@
+name: Quartus native install cache
+description: >
+  Restore a pruned Quartus Standard tree from GH cache and extract it to
+  /opt/intelFPGA/<version>. On cache miss, install via quartus-install.py
+  (provision_quartus_native.sh), prune, tar, save to cache. Mirrors the
+  docker-cache-load action's restore/miss/save shape — including leaving
+  compression to actions/cache rather than pre-compressing. The cache save is
+  best-effort: if the entry exceeds the 10 GB/repo cap the build still proceeds
+  and the next run reinstalls (clean miss).
+
+inputs:
+  version:
+    description: quartus-install.py Standard key, e.g. 17.0std
+    required: true
+  device:
+    description: Quartus device key (Cyclone V)
+    required: false
+    default: c5
+  install-repo:
+    description: git URL of the quartus-install repo to clone on a cache miss
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Quartus tarball cache
+      id: q_cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ runner.temp }}/quartus.tar
+        key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
+
+    - name: Install or restore Quartus
+      shell: bash
+      run: |
+        set -euo pipefail
+        T="/opt/intelFPGA/${{ inputs.version }}"
+        if [ "${CACHE_HIT}" = "true" ]; then
+            echo "Cache hit — extracting ${T}"
+            sudo mkdir -p "${T%/*}"
+            sudo tar -xf "${{ runner.temp }}/quartus.tar" -C /
+            rm -f "${{ runner.temp }}/quartus.tar"
+        else
+            echo "Cache miss — installing Quartus ${{ inputs.version }}"
+            QUARTUS_VERSION="${{ inputs.version }}" \
+            QUARTUS_DEVICE="${{ inputs.device }}" \
+            QUARTUS_INSTALL_REPO="${{ inputs.install-repo }}" \
+            QUARTUS_TARGET="${T}" \
+                ./.github/provision_quartus_native.sh
+            # Absolute path so the restore extracts to the same place.
+            # Compression is left to actions/cache (zstd), same as
+            # docker-cache-load — pre-compressing here only double-works.
+            sudo tar -cf "${{ runner.temp }}/quartus.tar" "${T}"
+        fi
+        echo "QUARTUS_NATIVE_HOME=${T}" >> "${GITHUB_ENV}"
+      env:
+        CACHE_HIT: ${{ steps.q_cache.outputs.cache-hit }}
+
+    - name: Save Quartus tarball cache
+      if: steps.q_cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ runner.temp }}/quartus.tar
+        key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
+
+    - name: Free Quartus tarball
+      if: always()
+      shell: bash
+      run: rm -f "${{ runner.temp }}/quartus.tar"
