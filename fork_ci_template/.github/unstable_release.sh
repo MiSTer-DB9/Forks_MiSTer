@@ -168,13 +168,15 @@ for i in "${!CORE_NAME[@]}"; do
         # NIC untouched so Azure anti-spoof never severs the runner.
         # Quartus 17's bundled quartus/linux64 still needs a handful of
         # system X/glib/font libs (validated set below; libstdc++6/zlib1g
-        # are already in the base, libpng/libncurses shimmed in-tree by
-        # --fix-libpng/--fix-libncurses). HOME=/tmp = writable,
-        # host-config-free (no stray quartus2.ini). One apt per native
-        # build (~25 s) is negligible vs the Quartus run; keeping it inline
-        # avoids a custom image / GHCR / registry to maintain.
+        # already in the base, libpng/libncurses shimmed in-tree by
+        # --fix-libpng/--fix-libncurses). Its bundled 2017 libudev.so.1
+        # segfaults against glibc 2.39 with no in-container udevd
+        # (FlexLM hostid scan), so LD_PRELOAD the modern system libudev.
+        # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
+        # One apt per native build (~25 s) is negligible vs the Quartus
+        # run; inline avoids a custom image / GHCR / registry to maintain.
         QRT_IMG="ubuntu:24.04"
-        QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6"
+        QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
         LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
         retry -- docker pull "${QRT_IMG}"
         # QUARTUS_NODELOCK_MAC is the license hostid — never echoed.
@@ -194,6 +196,7 @@ for i in "${!CORE_NAME[@]}"; do
                 export DEBIAN_FRONTEND=noninteractive
                 apt-get update -qq
                 apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
+                export LD_PRELOAD="$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)"
                 exec "${QNH}/quartus/bin/quartus_sh" --flow compile "${QIN}"' \
             || ./.github/notify_error.sh "UNSTABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${UPSTREAM_SHA7})" "$@"
     else
