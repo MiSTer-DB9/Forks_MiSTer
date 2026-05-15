@@ -71,7 +71,36 @@ if ! ip link show ql_lic >/dev/null 2>&1; then
 fi
 sudo ip link set ql_lic address "${MAC_COLON}"
 sudo ip link set ql_lic up
+# FlexLM's lmhostid enumerates via SIOCGIFCONF, which only returns interfaces
+# that carry an address. A dummy iface that is merely `up` with no IP is
+# skipped — the MAC is set but FlexLM never sees that NIC, yielding
+# "Error (292028): Specified license is not valid for this machine". Give it
+# a throwaway TEST-NET-1 (RFC 5737) address so it gets enumerated.
+sudo ip addr add 192.0.2.7/24 dev ql_lic 2>/dev/null || true
 echo "ql_lic up with node-locked MAC (masked)"
+
+# Non-secret diagnostics: link/addr state + what FlexLM computes as the
+# machine hostid(s) + the license's FEATURE/version (NOT the SIGN=). This
+# turns a blind 292028 into something we can actually compare. Never prints
+# the MAC, SIGN, or any key material.
+echo "--- ql_lic state ---"
+ip -br link show ql_lic 2>/dev/null | sed 's/[0-9a-f:]\{17\}/<mac>/g' || true
+ip -br addr show ql_lic 2>/dev/null || true
+LMUTIL="${QUARTUS_NATIVE_HOME:-}/quartus/linux64/lmutil"
+if [[ -x "${LMUTIL}" ]]; then
+    # Boolean only — never print the hostid list (this is a public repo and
+    # the node-lock MAC is the user's real NIC). Just confirm FlexLM can see
+    # the spoofed hostid; that is the whole question behind 292028.
+    if "${LMUTIL}" lmhostid -ether 2>/dev/null \
+            | tr 'A-Z' 'a-z' | tr -d ':-' | grep -qF "${RAW_MAC,,}"; then
+        echo "lmhostid: spoofed node-lock hostid IS visible to FlexLM (good)"
+    else
+        echo "lmhostid: spoofed node-lock hostid NOT visible to FlexLM (this is the 292028 cause)"
+    fi
+fi
+echo "--- license FEATURE/INCREMENT (name vendor version only) ---"
+grep -oE '^[[:space:]]*(FEATURE|INCREMENT)[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+' \
+    "${LIC_FILE}" 2>/dev/null | head -20 || echo "(none parsed)"
 
 {
     echo "LM_LICENSE_FILE=${LIC_FILE}"
