@@ -326,7 +326,9 @@ DB15_INST_RE = re.compile(
 
 STANDALONE_USER_OUT_RE = re.compile(
     r'(?:^[ \t]*//[^\n]*JOY_FLAG\[[12]\][^\n]*\n)?'                   # optional preceding comment
-    r'^[ \t]*assign[ \t]+USER_OUT[ \t]*=[ \t]*JOY_FLAG\[2\][ \t]*\?[ \t]*'
+    r'^[ \t]*assign[ \t]+USER_OUT[ \t]*=[ \t]*'
+    r'(?![^\n]*\bsnac\b)'                                             # NOT if a `snac ?` fall-through arm
+    r'JOY_FLAG\[2\][ \t]*\?[ \t]*'
     r'\{[^{}]*JOY_SPLIT[^{}]*JOY_MDSEL[^{}]*\}[^\n]*\n'              # first line
     r'(?:^[ \t]*:[^\n]*\n){0,3}',                                     # 0-3 continuation lines (multi-line ternary)
     flags=re.MULTILINE,
@@ -336,6 +338,39 @@ STANDALONE_USER_OUT_RE = re.compile(
 def strip_standalone_user_out(text: str) -> tuple[str, bool]:
     new_text, n = STANDALONE_USER_OUT_RE.subn('', text, count=1)
     return new_text, n > 0
+
+
+# A few cores (TurboGrafx16) append a `snac ? {strobes} : '1` SNAC arm to the
+# standalone USER_OUT mux. The DB9-baseline shape is one line:
+#   assign USER_OUT = JOY_FLAG[2] ? {...} : JOY_FLAG[1] ? {...}
+#                   : snac ? {2'b11,snac_clr,1'b1,snac_sel,2'b11} : '1;
+# (the optional JOY_FLAG arms are absent on a pristine-upstream port). Naively
+# stripping it kills SNAC on USER_IO/USER_OUT — the joydb wrapper never drives
+# the SNAC strobes. Rewrite to keep the SNAC arm and fall through to the
+# wrapper's USER_OUT_DRIVE for DB9MD/DB15/Saturn. Self-idempotent: the rewritten
+# terminal is `USER_OUT_DRIVE;`, not `'1`/`8'hFF`, so it won't re-match.
+SNAC_USER_OUT_RE = re.compile(
+    r'(?:^[ \t]*//[^\n]*JOY_FLAG\[[12]\][^\n]*\n)?'                   # optional preceding comment
+    r'^(?P<indent>[ \t]*)assign[ \t]+USER_OUT[ \t]*=[ \t]*'
+    r'(?:JOY_FLAG\[2\][ \t]*\?[^\n]*?JOY_FLAG\[1\][ \t]*\?[^\n]*?)?'  # optional DB9MD/DB15 arms
+    r'snac[ \t]*\?[ \t]*(?P<payload>\{[^{}]*\})[ \t]*:[ \t]*'
+    r"(?:'1|7'b1111111|8'hFF)[ \t]*;[^\n]*\n",
+    flags=re.MULTILINE,
+)
+
+
+def rewrite_snac_user_out(text: str) -> tuple[str, bool]:
+    m = SNAC_USER_OUT_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group('indent')
+    payload = m.group('payload')
+    new_block = (
+        f'{indent}// [MiSTer-DB9 BEGIN] - SNAC USER_OUT strobes take priority; else joydb wrapper\n'
+        f'{indent}assign USER_OUT = snac ? {payload} : USER_OUT_DRIVE;\n'
+        f'{indent}// [MiSTer-DB9 END]\n'
+    )
+    return text[:m.start()] + new_block + text[m.end():], True
 
 
 def strip_legacy_instances(text: str) -> tuple[str, list[str]]:
@@ -820,6 +855,16 @@ def port_core(core_dir: Path) -> list[str]:
         notes.append(f'{sv.name}: rewrote SerJoystick USER_OUT mux to USER_OUT_DRIVE')
         text, _ = strip_wrapper_user_out_assign(text)
         notes.append(f'{sv.name}: stripped wrapper `assign USER_OUT = USER_OUT_DRIVE;` (always-block drives USER_OUT)')
+
+    # SNAC-on-USER_OUT family (TurboGrafx16): the standalone mux carries a
+    # `snac ? {strobes} : '1` arm. Preserve the SNAC strobes, fall through to
+    # the wrapper's USER_OUT_DRIVE — otherwise SNAC is dead on the ported core.
+    text, ok = rewrite_snac_user_out(text)
+    if ok:
+        notes.append(f'{sv.name}: rewrote standalone SNAC USER_OUT mux (SNAC strobes preserved, joydb fall-through)')
+        text, stripped = strip_wrapper_user_out_assign(text)
+        if stripped:
+            notes.append(f'{sv.name}: stripped wrapper `assign USER_OUT = USER_OUT_DRIVE;` (SNAC mux drives USER_OUT)')
 
     if text == orig:
         notes.append(f'{sv.name}: no changes')
