@@ -96,11 +96,16 @@ for i in "${!CORE_NAME[@]}"; do
         # Native Quartus *Standard* in a stock ubuntu:24.04 container
         # ONLY so `--mac-address` puts the license node-lock MAC on the
         # container's eth0 (FlexLM hostid = its netns primary iface); host
-        # NIC untouched so Azure anti-spoof never severs the runner. Quartus
-        # is self-contained vs its bind-mounted bundled linux64 + glibc
-        # (--fix-libpng/--fix-libncurses shimmed in-tree at install).
-        # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
+        # NIC untouched so Azure anti-spoof never severs the runner.
+        # Quartus 17's bundled quartus/linux64 still needs a handful of
+        # system X/glib/font libs (validated set below; libstdc++6/zlib1g
+        # are already in the base, libpng/libncurses shimmed in-tree by
+        # --fix-libpng/--fix-libncurses). HOME=/tmp = writable,
+        # host-config-free (no stray quartus2.ini). One apt per native
+        # build (~25 s) is negligible vs the Quartus run; keeping it inline
+        # avoids a custom image / GHCR / registry to maintain.
         QRT_IMG="ubuntu:24.04"
+        QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6"
         LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
         retry -- docker pull "${QRT_IMG}"
         # QUARTUS_NODELOCK_MAC is the license hostid — never echoed.
@@ -112,8 +117,15 @@ for i in "${!CORE_NAME[@]}"; do
             -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}" \
             -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}" \
             -e "HOME=/tmp" \
+            -e "QRT_PKGS=${QRT_PKGS}" \
+            -e "QNH=${QUARTUS_NATIVE_HOME}" \
+            -e "QIN=${COMPILATION_INPUT[i]}" \
             "${QRT_IMG}" \
-            "${QUARTUS_NATIVE_HOME}/quartus/bin/quartus_sh" --flow compile "${COMPILATION_INPUT[i]}" \
+            bash -c 'set -e
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
+                exec "${QNH}/quartus/bin/quartus_sh" --flow compile "${QIN}"' \
             || ./.github/notify_error.sh "STABLE COMPILATION ERROR (${CORE_NAME[i]} @ ${BUILD_SHA7})" "$@"
     else
         docker run --rm \
