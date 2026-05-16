@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Trim the installed Quartus tree to fit the 10 GB actions/cache cap. The RBF
-# flow only needs the CLI compile chain (quartus_sh/map/fit/asm/sta/cdb/cpf/pow)
-# for Cyclone V — everything below is unused by `quartus_sh --flow compile`.
+# Trim the installed Quartus tree of components that are provably NOT invoked by
+# the headless synthesis flow: the GUI, documentation/help, simulators, the Nios
+# II software EDS, logs and the uninstaller. This is NOT a size-driven prune —
+# actions/cache zstd-compresses the tarball so the 10 GB cap is not a real
+# constraint; it only drops dead weight that can never run in CI.
 #
-# Bias: when unsure, KEEP. An over-large tree only makes the cache *save* fail
-# (graceful — build still runs, next run reinstalls). A missing tool is a hard
-# build failure. Every deletion is guarded + best-effort.
+# Do NOT prune the IP generators. `quartus_sh --flow compile` invokes
+# sopc_builder/bin/ip-generate (and dspba) on the fly to synthesize SLD/IP
+# megafunctions — notably the JTAG SLD instrumentation fabric `alt_sld_fab`
+# (libraries/megafunctions/sld_hub.vhd). Pruning sopc_builder makes ip-generate
+# "fail to launch" and the build dies with Error (12006): undefined entity
+# "alt_sld_fab". sopc_builder is only ~51 MB anyway.
+#
+# Bias: when unsure, KEEP. A missing tool is a hard build failure; an extra
+# directory costs nothing. Every deletion is guarded + best-effort.
 
 set -euo pipefail
 
@@ -24,14 +32,16 @@ rm_if() {
     done
 }
 
-# Large, RBF-irrelevant top-level / quartus subtrees. NOTE: do NOT prune
-# anything under quartus/linux64 — Quartus 17's CLI (quartus_sh and the
-# compile chain) is itself linked against the bundled Qt4 + libstdc++.so.6.
-# Removing the bundled libQt*.so.4 makes the loader fall back to the host's
-# /lib64/libQtCore.so.4, which needs a newer CXXABI than the 2017 bundled
-# libstdc++ provides, and quartus_sh dies. (A bare `*qt*` glob was even
-# worse: it also matched libccl_qtl_string_match.so.) The linux64 libs are
-# only ~tens of MB anyway, so keeping them costs us nothing under the cap.
+# GUI / docs / simulators / Nios EDS / logs — none reachable from a headless
+# `quartus_sh --flow compile`. NOTE: do NOT prune anything under
+# quartus/linux64 — Quartus 17's CLI (quartus_sh and the compile chain) is
+# itself linked against the bundled Qt4 + libstdc++.so.6. Removing the bundled
+# libQt*.so.4 makes the loader fall back to the host's /lib64/libQtCore.so.4,
+# which needs a newer CXXABI than the 2017 bundled libstdc++ provides, and
+# quartus_sh dies. (A bare `*qt*` glob was even worse: it also matched
+# libccl_qtl_string_match.so.) Also do NOT prune quartus/sopc_builder or
+# quartus/dspba — the compile flow runs ip-generate/dspba to build SLD/IP
+# megafunctions (see header).
 rm_if \
     "${T}/nios2eds" \
     "${T}/modelsim_ase" "${T}/modelsim_ae" \
@@ -39,8 +49,6 @@ rm_if \
     "${T}/logs" \
     "${T}/quartus/docs" \
     "${T}/quartus/common/help" \
-    "${T}/quartus/sopc_builder" \
-    "${T}/quartus/dspba" \
     "${T}/quartus/bin64/quartus"
 
 # NOTE: no per-family devinfo prune. quartus-install.py installs a single
@@ -58,6 +66,13 @@ for tool in quartus_sh quartus_map quartus_fit quartus_asm quartus_sta; do
         exit 1
     fi
 done
+# ip-generate is invoked by --flow compile to synthesize the SLD/IP fabric
+# (alt_sld_fab). Its absence only fails at compile (Error 12006) — catch it here.
+if [[ ! -x "${T}/quartus/sopc_builder/bin/ip-generate" ]]; then
+    echo "::error::prune removed sopc_builder/bin/ip-generate — SLD/IP" \
+         "fabric (alt_sld_fab) generation will fail at compile"
+    exit 1
+fi
 # Existence is not enough: a too-greedy prune can delete a shared lib the
 # tool dynamically loads (e.g. libccl_qtl_string_match.so), which only fails
 # at compile time. Actually invoke quartus_sh so that class of breakage is
