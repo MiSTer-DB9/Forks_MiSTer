@@ -102,6 +102,11 @@ jobs:
     # 17.0std) or `auto` (default → parse the .qsf LAST_QUARTUS_VERSION).
     - name: Resolve Quartus Standard version
       id: mode
+      env:
+        # detect_quartus_version.sh queries `quartus-install.py
+        # --list-versions` from this repo (memoized shallow clone) instead
+        # of a hardcoded list. Substituted by setup_cicd.sh's global sed.
+        QUARTUS_INSTALL_REPO: <<QUARTUS_INSTALL_REPO>>
       run: |
         ver=$(QUARTUS_NATIVE_OVERRIDE='<<QUARTUS_NATIVE>>' ./.github/detect_quartus_version.sh '${{ matrix.input }}')
         echo "version=${ver}" >> "$GITHUB_OUTPUT"
