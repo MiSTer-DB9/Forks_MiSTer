@@ -38,10 +38,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # in-tree by --fix-libpng/--fix-libncurses.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
-      ca-certificates git python3 \
+      ca-certificates git python3 locales \
       libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 \
       libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1 \
+ && locale-gen en_US.UTF-8 \
+ && update-locale LANG=en_US.UTF-8 \
  && rm -rf /var/lib/apt/lists/*
+
+# Quartus' qenv.sh hard-exports LANG=en_US.UTF-8; without that locale generated
+# bash warns `setlocale: LC_CTYPE: cannot change locale (en_US.UTF-8)` on every
+# build. Cosmetic (RBF is locale-agnostic; compute_source_hash pins LC_ALL=C),
+# but baking the locale keeps build logs clean for the rerun_transient.sh
+# log classifier.
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # The shared install/prune scripts (same files the CI provision fallback runs).
 # retry.sh is the real lib file (fork_ci_template's copy is a symlink to it).
