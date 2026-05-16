@@ -1,0 +1,146 @@
+name: Publish Quartus Artifact
+
+# Build + prune the Quartus Standard tree once per needed version and publish
+# it as a generic OCI **tarball artifact** (a bare zstd tar via `oras`, NOT a
+# docker image) to the PRIVATE package ghcr.io/mister-db9/quartus-native:<ver>.
+#
+# Every fork's release/unstable build resolves Quartus cheapest-first
+# (actions/quartus-toolchain): GH Actions cache -> this ghcr tarball
+# artifact -> native provision. This workflow keeps the artifact populated so a
+# cache miss is a ~tens-of-seconds `oras pull`+extract instead of a ~15 min
+# reinstall, and so the artifact survives the repo-scoped Actions cache's
+# eviction.
+#
+# Versions are data-driven: compute_quartus_versions.sh resolves the real set
+# needed across all of Forks.ini (honouring QUARTUS_NATIVE pins, else each
+# core's .qsf). workflow_dispatch can target a single version instead.
+#
+# NOTE (one-time, manual, org admin): the `quartus-native` package MUST be
+# Private — Intel/Altera's EULA forbids public redistribution of Quartus
+# binaries. The org secret GHCR_PULL_TOKEN (read:packages) the fork builds use
+# to pull it must exist. The push side uses the workflow's own GITHUB_TOKEN
+# (permissions: packages: write).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Single Quartus Standard key to publish (e.g. 17.0std). Empty = all needed.'
+        required: false
+        default: ''
+  push:
+    paths:
+      - '.github/compute_quartus_versions.sh'
+      - '.github/lib/retry.sh'
+      - 'fork_ci_template/.github/provision_quartus_native.sh'
+      - 'fork_ci_template/.github/prune_quartus_tree.sh'
+      - 'fork_ci_template/.github/install_oras.sh'
+      - 'fork_ci_template/.github/detect_quartus_version.sh'
+      - '.github/workflows/publish_quartus_artifact.yml'
+  schedule:
+    # Monthly — refresh in case the install source or prune logic changes even
+    # when the Quartus set is unchanged.
+    - cron: '0 4 1 * *'
+
+env:
+  ARTIFACT_REPO: ghcr.io/mister-db9/quartus-native
+  ARTIFACT_TYPE: application/vnd.misterdb9.quartus.tarball
+
+jobs:
+  set-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.compute.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Resolve version set
+        id: compute
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          IN="${{ github.event.inputs.version }}"
+          if [ -n "${IN}" ]; then
+            echo "Explicit dispatch version: ${IN}"
+            echo "versions=[\"${IN}\"]" >> "$GITHUB_OUTPUT"
+          else
+            V="$(./.github/compute_quartus_versions.sh)"
+            echo "Computed: ${V}"
+            echo "versions=${V}" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: set-matrix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.set-matrix.outputs.versions) }}
+    concurrency:
+      group: publish-quartus-artifact-${{ matrix.version }}
+      cancel-in-progress: false
+    env:
+      QUARTUS_INSTALL_REPO: https://github.com/drizzt/quartus-install.git
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install oras
+        run: ./fork_ci_template/.github/install_oras.sh
+
+      - name: "Log in to ghcr.io (packages write)"
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Provision + prune Quartus ${{ matrix.version }}
+        env:
+          QUARTUS_VERSION: ${{ matrix.version }}
+          QUARTUS_DEVICE: c5
+          QUARTUS_TARGET: /opt/intelFPGA/${{ matrix.version }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: ./fork_ci_template/.github/provision_quartus_native.sh
+
+      - name: Pack + push tarball artifact
+        env:
+          REF: ${{ env.ARTIFACT_REPO }}:${{ matrix.version }}
+          T: /opt/intelFPGA/${{ matrix.version }}
+          ZST: ${{ runner.temp }}/quartus.tar.zst
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          source ./.github/lib/retry.sh
+          # Absolute-path tar (restored with `tar -xf -C /` by the consumer
+          # action's tier-1/tier-2 path), zstd-compressed for transit.
+          # -12 not -19: zstd decompress speed is level-independent, so the
+          # only tradeoff is publish time vs stored blob size. -12 --long is
+          # within ~3-5% of -19's size at a fraction of the compress time.
+          sudo tar -cf - "${T}" | zstd -q -12 --long -T0 -o "${ZST}"
+          ( cd "$(dirname "${ZST}")" \
+            && retry -n 3 -d 20 -- oras push "${REF}" \
+                 --artifact-type "${ARTIFACT_TYPE}" \
+                 "$(basename "${ZST}"):application/zstd" )
+          rm -f "${ZST}"
+          echo "Published ${REF}"
+
+      - name: Smoke-check the published artifact
+        env:
+          REF: ${{ env.ARTIFACT_REPO }}:${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          AT="$(oras manifest fetch "${REF}" | jq -r '.artifactType')"
+          test "${AT}" = "${ARTIFACT_TYPE}" \
+            || { echo "::error::artifactType mismatch: ${AT}"; exit 1; }
+          OUT="$(mktemp -d)"
+          oras pull "${REF}" -o "${OUT}"
+          zstd -dq -c "${OUT}/quartus.tar.zst" \
+            | tar -tf - "opt/intelFPGA/${{ matrix.version }}/quartus/bin/quartus_sh" >/dev/null
+          echo "OK: ${REF} pulls and contains quartus_sh"
+          rm -rf "${OUT}"
+
+      - name: Reminder — keep package Private
+        if: always()
+        run: |
+          echo "::notice::Ensure ghcr.io/mister-db9/quartus-native is set to PRIVATE (Intel/Altera EULA)"
+          echo "::notice::and org secret GHCR_PULL_TOKEN (read:packages) exists for fork pulls."

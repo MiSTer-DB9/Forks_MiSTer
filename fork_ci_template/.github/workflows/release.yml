@@ -118,8 +118,8 @@ jobs:
         QUARTUS_LICENSE: ${{ secrets.QUARTUS_LICENSE }}
         QUARTUS_LICENSE_MAC: ${{ secrets.QUARTUS_LICENSE_MAC }}
 
-    - name: Quartus image or install
-      uses: ./.github/actions/quartus-image-or-install
+    - name: Resolve Quartus toolchain
+      uses: ./.github/actions/quartus-toolchain
       with:
         version: ${{ steps.mode.outputs.version }}
         device: c5
@@ -131,9 +131,7 @@ jobs:
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
-        QUARTUS_NATIVE_IMAGE: ${{ env.QUARTUS_NATIVE_IMAGE }}
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
-        GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}

@@ -9,39 +9,33 @@
 # shims) lands in the stable and unstable channels at once.
 #
 # Contract — the caller MUST, before invoking build_cores:
-#   - have sourced retry.sh (retry() used by the native docker pull)
+#   - have sourced retry.sh (retry() used by the ubuntu:24.04 docker pull)
 #   - set the CORE_NAME / COMPILATION_INPUT / COMPILATION_OUTPUT arrays
 #     (the setup_cicd.sh placeholder-expanded values stay in the callers; this
 #     lib carries no placeholder token so setup_cicd.sh must not sed it)
 #   - have run resolve_quartus_env (sets/validates QUARTUS_* + GITHUB_TOKEN)
 #   - declare a `UPLOAD_FILES=()` array (build_cores appends to it in place)
 #   - have LM_LICENSE_FILE set by materialize_quartus_license.sh (the license
-#     is never baked into the image — both paths materialize it at run time)
+#     is materialized at run time, never persisted into the toolchain tree)
 #   - run from the repo checkout root (notify_error.sh is ./.github/...)
 
-# Two native-Quartus *Standard* paths, selected by the quartus-image-or-install
-# action and surfaced through the env:
-#   - IMAGE path  (preferred): QUARTUS_NATIVE_IMAGE = the prebuilt private
-#     ghcr image (Quartus + apt deps baked). Quartus lives inside the image at
-#     /opt/intelFPGA/<ver>; no host volume, no in-container apt.
-#   - INSTALL path (fallback): QUARTUS_NATIVE_HOME = /opt/intelFPGA/<ver> on the
-#     runner (provisioned/cached by quartus-install-cache); run in a stock
-#     ubuntu:24.04 with the apt deps installed per build.
-# QUARTUS_NATIVE_VERSION (resolved std key) is always required; exactly one of
-# QUARTUS_NATIVE_IMAGE / QUARTUS_NATIVE_HOME must be set. GHCR_PULL_TOKEN (org
-# secret, read:packages) authenticates the private pull on the image path.
-# GITHUB_TOKEN is needed by every gh release call in both callers.
+# Native Quartus *Standard* build. quartus-toolchain resolves the
+# toolchain (GH Actions cache -> private ghcr tarball artifact -> native
+# provision) and exports QUARTUS_NATIVE_HOME = /opt/intelFPGA/<ver> on the
+# runner. The compile then runs in a stock ubuntu:24.04 container — ONLY so
+# `--mac-address` can put the FlexLM node-lock MAC on the container's eth0 —
+# with the validated X/glib/font libs apt'd per build.
+# QUARTUS_NATIVE_VERSION (resolved std key) and QUARTUS_NATIVE_HOME are both
+# required. GITHUB_TOKEN is needed by every gh release call in both callers.
 resolve_quartus_env() {
     QUARTUS_NATIVE_VERSION="${QUARTUS_NATIVE_VERSION:-}"
-    QUARTUS_NATIVE_IMAGE="${QUARTUS_NATIVE_IMAGE:-}"
     QUARTUS_NATIVE_HOME="${QUARTUS_NATIVE_HOME:-}"
-    GHCR_PULL_TOKEN="${GHCR_PULL_TOKEN:-}"
     if [[ -z "${QUARTUS_NATIVE_VERSION}" ]]; then
         echo "::error::QUARTUS_NATIVE_VERSION not set — native Quartus Standard is the only build path"
         exit 1
     fi
-    if [[ -z "${QUARTUS_NATIVE_IMAGE}" && -z "${QUARTUS_NATIVE_HOME}" ]]; then
-        echo "::error::neither QUARTUS_NATIVE_IMAGE nor QUARTUS_NATIVE_HOME set — quartus-image-or-install must export one"
+    if [[ -z "${QUARTUS_NATIVE_HOME}" ]]; then
+        echo "::error::QUARTUS_NATIVE_HOME not set — quartus-toolchain must export it"
         exit 1
     fi
     GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
@@ -106,9 +100,8 @@ build_cores() {
         # never severs the runner. HOME=/tmp = writable, host-config-free (no
         # stray quartus2.ini). Quartus 17's bundled 2017 libudev.so.1
         # segfaults against glibc 2.39 with no in-container udevd (FlexLM
-        # hostid scan), so LD_PRELOAD the modern system libudev (baked into
-        # the image on the IMAGE path; from the per-build apt on the INSTALL
-        # path).
+        # hostid scan), so LD_PRELOAD the modern system libudev (from the
+        # per-build apt).
         local LIC_DIR NODELOCK_MAC QRT_CMD APT_STEP=''
         LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
         # Re-derive the node-lock MAC from the license file itself (the
@@ -132,35 +125,22 @@ build_cores() {
             -e "HOME=/tmp"
             -e "QIN=${COMPILATION_INPUT[i]}" )
 
-        if [[ -n "${QUARTUS_NATIVE_IMAGE}" ]]; then
-            # IMAGE path: Quartus + all runtime apt deps baked into the
-            # private ghcr image. No host Quartus volume, no in-container apt;
-            # QNH/LD_PRELOAD come from the image's baked ENV.
-            if [[ -n "${GHCR_PULL_TOKEN}" ]]; then
-                echo "${GHCR_PULL_TOKEN}" \
-                    | docker login ghcr.io -u x-access-token --password-stdin
-            fi
-            retry -- docker pull "${QUARTUS_NATIVE_IMAGE}"
-            QRT_RUN+=( "${QUARTUS_NATIVE_IMAGE}" )
-        else
-            # INSTALL fallback: provisioned/cached tree on the runner, stock
-            # ubuntu:24.04, the validated X/glib/font libs apt'd per build.
-            # libstdc++6/zlib1g are in the base; libpng/libncurses shimmed
-            # in-tree by --fix-libpng/--fix-libncurses.
-            local QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
-            retry -- docker pull ubuntu:24.04
-            QRT_RUN+=( -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro"
-                       -e "QRT_PKGS=${QRT_PKGS}"
-                       -e "QNH=${QUARTUS_NATIVE_HOME}"
-                       ubuntu:24.04 )
-            APT_STEP='export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends ${QRT_PKGS}'
-        fi
+        # Provisioned/cached tree on the runner, stock ubuntu:24.04, the
+        # validated X/glib/font libs apt'd per build. libstdc++6/zlib1g are in
+        # the base; libpng/libncurses shimmed in-tree by
+        # --fix-libpng/--fix-libncurses.
+        local QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
+        retry -- docker pull ubuntu:24.04
+        QRT_RUN+=( -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro"
+                   -e "QRT_PKGS=${QRT_PKGS}"
+                   -e "QNH=${QUARTUS_NATIVE_HOME}"
+                   ubuntu:24.04 )
+        APT_STEP='export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq
+        apt-get install -y -qq --no-install-recommends ${QRT_PKGS}'
 
-        # One run command — only the apt preamble differs by path. QNH and
-        # LD_PRELOAD fall back to the image's baked ENV when unset (IMAGE
-        # path); the INSTALL path sets QNH via -e and derives LD_PRELOAD here.
+        # QNH defaults to QUARTUS_NATIVE_HOME; LD_PRELOAD points at the modern
+        # system libudev installed by the per-build apt.
         QRT_CMD="set -e
         ${APT_STEP}
         : \"\${QNH:=\${QUARTUS_NATIVE_HOME}}\"
