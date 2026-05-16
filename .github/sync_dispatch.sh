@@ -52,6 +52,25 @@ _parse_fork_url() {
     NAME="${BASH_REMATCH[4]}"
 }
 
+# Shared: atomically claim the (fork_repo|main_branch) dispatch slot for this
+# sync run. setup_cicd.sh groups Forks.ini sections by exactly this key and
+# emits ONE per-repo workflow whose emit_matrix.sh matrix builds every core in
+# the group, so one workflow_dispatch per repo+branch is correct. Multiple
+# sections sharing a repo+branch (e.g. Atari800_DB9 + Atari5200_DB9 on
+# Atari800_MiSTer@master) must therefore POST only once — a second dispatch on
+# the same github.ref trips the workflow's cancel-in-progress concurrency and
+# kills the first run for no reason. mkdir is atomic create-or-fail across the
+# xargs -P subshells, which share the exported RESULTS_DIR on one host. The
+# claim.* name cannot collide with the *.log / *.fail result globs.
+# Returns 0 if this section won the slot (proceed to POST), 1 if a sibling
+# already claimed it (skip the redundant POST).
+_claim_dispatch() {
+    local owner="$1" name="$2" main_branch="$3"
+    local key
+    key="$(printf '%s' "${owner}/${name}|${main_branch}" | tr -c '[:alnum:]._-' '_')"
+    mkdir "${RESULTS_DIR}/claim.${key}" 2>/dev/null
+}
+
 # Shared: POST workflow_dispatch to the fork repo.
 _dispatch() {
     local fork_name="$1" owner="$2" name="$3" main_branch="$4"
@@ -272,7 +291,11 @@ check_and_dispatch() {
     fi
 
     if (( rc == 0 )); then
-        _dispatch "${fork_name}" "${OWNER}" "${NAME}" "${MAIN_BRANCH}"
+        if _claim_dispatch "${OWNER}" "${NAME}" "${MAIN_BRANCH}"; then
+            _dispatch "${fork_name}" "${OWNER}" "${NAME}" "${MAIN_BRANCH}"
+        else
+            echo "[${fork_name}] dispatch coalesced — sibling already dispatched ${OWNER}/${NAME}@${MAIN_BRANCH}"
+        fi
     elif (( rc >= 2 )); then
         return 1
     fi
@@ -318,7 +341,7 @@ else
         unset -n _fd
     done > "${RESULTS_DIR}/forks.nul"
 
-    export -f check_and_dispatch _parse_fork_url _dispatch retry
+    export -f check_and_dispatch _parse_fork_url _claim_dispatch _dispatch retry
     if [[ "${MODE}" == "--stable" ]]; then
         export -f _check_stable
     else
