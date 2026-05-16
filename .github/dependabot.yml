@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Lives only in Forks_MiSTer/.github (NOT fork_ci_template/.github, which is
+  # cp -rL'd into every per-core fork by .github/setup_cicd.sh). One entry
+  # covers both action trees:
+  #   "/"              -> /.github/workflows/*
+  #   "/fork_ci_template" -> /fork_ci_template/.github/workflows/* plus the
+  #                          composite action under .github/actions/**/action.yml
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/fork_ci_template"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"

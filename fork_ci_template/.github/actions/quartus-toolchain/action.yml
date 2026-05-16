@@ -44,7 +44,7 @@ runs:
   steps:
     - name: Restore Quartus native tree cache
       id: q_cache
-      uses: actions/cache/restore@v5
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ${{ runner.temp }}/quartus.tar
         key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
@@ -147,7 +147,7 @@ runs:
       # falls back to a clean miss next run.
       if: steps.q_cache.outputs.cache-hit != 'true' && steps.sel.outputs.provisioned == 'true'
       continue-on-error: true
-      uses: actions/cache/save@v5
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ${{ runner.temp }}/quartus.tar
         key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
