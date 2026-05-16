@@ -8,18 +8,18 @@
 #      The literal "auto" means "ignore me, parse the qsf instead".
 #      (An explicit pin short-circuits before any network — see _main.)
 #   2. Parse LAST_QUARTUS_VERSION from <COMPILATION_INPUT>.qsf and map to the
-#      closest installable key:
-#        - target  < 21.1  -> closest *std  (Standard) key
-#        - target >= 21.1  -> closest *lite (Lite) key, itself >= 21.1
-#      Intel/Altera discontinued the Quartus *Standard* edition after 20.1.1;
-#      releases >= 21.1 ship only as Lite (or Pro). For a >=21.1 core there is
-#      no Standard to pick, so we install the matching Lite edition — which is
-#      what upstream builds with, keeping the generated IP (pll_q, ...) parity
-#      and avoiding a silent downgrade to 20.1std. Lite needs no FlexLM
-#      license (the always-present QUARTUS_LICENSE is simply ignored by a Lite
-#      quartus_sh), and the rest of the pipeline passes the key through
-#      verbatim (provision/quartus-install.py/prebuilt image are edition
-#      agnostic).
+#      closest *std (Standard edition) key — exact major.minor, else highest
+#      <= target, else highest available.
+#      The fork always builds Standard: it has the timing-driven router/
+#      fitter and the org QUARTUS_LICENSE entitles it. Altera's modern line
+#      (21.1, 22.1, 23.1, 24.1, 25.1) ships Standard alongside Lite/Pro, so
+#      every core resolves to a Standard key at exact version parity (a
+#      qsf that records "... Lite Edition" only reflects how the upstream
+#      author saved the project — the same-version Standard build produces
+#      the identical IP / pll_q netlist; edition differs in fitter/device
+#      support, not megafunction output). The rest of the pipeline passes
+#      the key through verbatim (provision/quartus-install.py/prebuilt
+#      image are version-agnostic).
 #
 # The candidate key set is NOT hardcoded: it is fetched from the single
 # source of truth — `quartus-install.py --list-versions` — via a memoized
@@ -153,50 +153,34 @@ _quartus_pick_closest() {
 }
 
 # quartus_map_std <raw-version> — map a LAST_QUARTUS_VERSION-style string
-# ("17.0.2", "17.0std", "25.1std.0 Lite Edition", ...) to an installable key
-# drawn from `quartus-install.py --list-versions`:
-#   - target  < 21.1  -> closest *std  key (Standard)
-#   - target >= 21.1  -> closest *lite key whose own version is >= 21.1
-#     (Standard EOL at 20.1.1, see file header — Lite is upstream's edition,
-#     IP-parity; the >=21.1 filter stops a pre-21.1 Lite being picked)
-# Name kept (`_std`) for caller/source compatibility (release.yml,
-# unstable_release.yml, compute_quartus_versions.sh). Echoes the resolved
-# key. Not pure: triggers the memoized version-list fetch on first call.
+# ("17.0.2", "17.0std", "25.1std.0 Lite Edition", ...) to the closest *std
+# (Standard edition) key from `quartus-install.py --list-versions`. The fork
+# always builds Standard (timing-driven fitter; org QUARTUS_LICENSE entitles
+# it); Altera ships Standard for the modern 21.1..25.1 line too, so every
+# core gets a Standard key at exact version parity. Name kept (`_std`) for
+# caller/source compatibility (release.yml, unstable_release.yml,
+# compute_quartus_versions.sh). Echoes the resolved key. Not pure: triggers
+# the memoized version-list fetch on first call.
 quartus_map_std() {
-    local VER="$1" VER_MM target lite_floor t tnum label
+    local VER="$1" VER_MM target t
     local -a pool=()
 
     # Compare on the (major,minor) prefix only — patch level (e.g. 17.0.2)
     # maps to the same install (17.0std applies its own update_1 internally).
     VER_MM=$(awk -F'.' '{print $1"."$2}' <<<"${VER}")
     target=$(to_num "${VER_MM}")
-    lite_floor=$(to_num 21.1)
 
     _quartus_load_keys || return 1
 
-    if [[ "${target}" -ge "${lite_floor}" ]]; then
-        label="Lite"
-        while IFS= read -r t; do
-            [[ -z "${t}" ]] && continue
-            case "${t}" in
-                *lite)
-                    tnum=$(to_num "${t}")
-                    [[ "${tnum}" -ge "${lite_floor}" ]] && pool+=("${t}")
-                    ;;
-            esac
-        done <<<"${_QUARTUS_KEYS_CACHE}"
-    else
-        label="Standard"
-        while IFS= read -r t; do
-            [[ -z "${t}" ]] && continue
-            case "${t}" in
-                *std) pool+=("${t}") ;;
-            esac
-        done <<<"${_QUARTUS_KEYS_CACHE}"
-    fi
+    while IFS= read -r t; do
+        [[ -z "${t}" ]] && continue
+        case "${t}" in
+            *std) pool+=("${t}") ;;
+        esac
+    done <<<"${_QUARTUS_KEYS_CACHE}"
 
     if [[ "${#pool[@]}" -eq 0 ]]; then
-        echo "detect_quartus_version: no ${label} key in quartus-install.py version list (target ${VER_MM})" >&2
+        echo "detect_quartus_version: no Standard (*std) key in quartus-install.py version list (target ${VER_MM})" >&2
         return 1
     fi
     _quartus_pick_closest "${target}" "${pool[@]}"
