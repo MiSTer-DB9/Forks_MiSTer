@@ -117,39 +117,47 @@ setup_cicd_on_fork() {
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         ${TEMP_DIR}/.github/workflows/sync_release.yml
-    # unstable channel templating (mirrors sync_release sed pair)
+    # unstable channel templating. unstable_build.sh + emit_matrix.sh carry no
+    # placeholder (argv-driven) so they are NOT sed'd — same contract as
+    # quartus_build.sh / retry.sh.
+    sed -i \
+        -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        ${TEMP_DIR}/.github/unstable_merge.sh
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
-        -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
-        ${TEMP_DIR}/.github/unstable_release.sh
+        ${TEMP_DIR}/.github/unstable_publish.sh
     sed -i \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         ${TEMP_DIR}/.github/unstable_preflight.sh
+    # The build matrix is zipped from RELEASE_CORE_NAME/COMPILATION_INPUT/
+    # COMPILATION_OUTPUT by emit_matrix.sh in the preflight job, so the
+    # workflow needs all three lists (plus the per-leg Quartus selectors).
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         ${TEMP_DIR}/.github/workflows/unstable_release.yml
 
-    # stable channel templating (release.{sh,yml} + preflight skip)
+    # stable channel templating. release_build.sh is argv-driven (NOT sed'd);
+    # only release_publish.sh needs CORE_NAME[0] title + MAIN_BRANCH prefix.
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
-        -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
-        ${TEMP_DIR}/.github/release.sh
+        ${TEMP_DIR}/.github/release_publish.sh
     sed -i \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         ${TEMP_DIR}/.github/preflight_skip.sh
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
+        -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
+        -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \

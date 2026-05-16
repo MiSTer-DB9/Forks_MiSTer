@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shared constants + helpers for the unstable channel.
-# Sourced by both unstable_preflight.sh (cheap pre-check + state setup) and
-# unstable_release.sh (rerere train + merge + Quartus build + upload).
+# Sourced by unstable_preflight.sh (cheap pre-check + state setup),
+# unstable_merge.sh (merge + body advance), and unstable_publish.sh (upload).
 #
 # UNSTABLE_TAG / RETENTION are hard-coded by design — same across every fork,
 # no per-section templating. UNSTABLE_BRANCH derives from MAIN_BRANCH so the

@@ -1,10 +1,15 @@
 name: Unstable Release
 
-# unstable channel: build upstream HEAD on each tick, ship
-# to "unstable-builds" prerelease assets (last 7 retained for rollback).
-# Concurrency keyed per-branch so multi-variant repos (GBA: master/GBA2P/
-# accuracy) build their variants in parallel without cancelling each other,
-# while back-to-back triggers of the same variant still get serialized.
+# unstable channel: build upstream HEAD on each tick, ship to "unstable-builds"
+# prerelease assets (last 7 retained for rollback). Concurrency keyed
+# per-branch so multi-variant repos (GBA: master/GBA2P/accuracy) build their
+# variants in parallel without cancelling each other, while back-to-back
+# triggers of the same variant still get serialized.
+#
+# Three jobs: preflight (cheap HDL skip + one-time upstream merge/push + emit
+# the per-core matrix) → build (one matrix leg per core, each resolving Quartus
+# Standard from ITS OWN .qsf and building in parallel) → publish (fan-in:
+# upload every staged RBF to the shared unstable-builds release).
 concurrency:
   group: unstable-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,15 +21,24 @@ permissions:
   contents: write   # gh release create / upload / delete-asset
 
 jobs:
-  build:
+  preflight:
     runs-on: ubuntu-latest
-
+    outputs:
+      skip: ${{ steps.preflight.outputs.skip }}
+      merge_skip: ${{ steps.merge.outputs.skip }}
+      skip_quartus: ${{ steps.meta.outputs.skip_quartus }}
+      matrix: ${{ steps.meta.outputs.matrix }}
+      build_sha: ${{ steps.merge.outputs.build_sha }}
+      upstream_sha: ${{ steps.merge.outputs.upstream_sha }}
+      master_sha: ${{ steps.merge.outputs.master_sha }}
+      source_hash: ${{ steps.merge.outputs.source_hash }}
+      timestamp: ${{ steps.merge.outputs.timestamp }}
     steps:
     - uses: actions/checkout@v6
       with:
-        # We checkout the fork's main branch only as a starting point for
-        # remotes; unstable_preflight.sh fetches upstream + checks out the
-        # unstable/<branch> ref before unstable_release.sh resumes the merge.
+        # main branch is only the starting point for remotes;
+        # unstable_preflight.sh fetches upstream + checks out the
+        # unstable/<branch> ref before unstable_merge.sh resumes.
         fetch-depth: 0
 
     - name: Pre-flight skip check
@@ -34,37 +48,58 @@ jobs:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    # All FPGA forks build with native Quartus *Standard* in an ubuntu:24.04
-    # container (no more docker Quartus Lite path). The Standard version is
-    # `<<QUARTUS_NATIVE>>` — Forks.ini per-fork pin (e.g. 17.0std) or `auto`
-    # (default) to derive it from the core's .qsf LAST_QUARTUS_VERSION.
-    # `skip=true` for a non-Quartus section (COMPILATION_INPUT=make, e.g.
-    # Main_DB9's separate release_v2 pipeline) so the templated workflow is an
-    # inert no-op there instead of hard-failing on a missing .qsf.
-    - name: Resolve Quartus Standard version
+    # `skip_quartus=true` for a non-Quartus section (COMPILATION_INPUT=make,
+    # e.g. Main_DB9) so build/publish stay inert no-ops there.
+    - name: Emit per-core matrix
       if: steps.preflight.outputs.skip != 'true'
-      id: mode
+      id: meta
       run: |
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
         if [ "${first_input}" = "make" ]; then
-          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "skip_quartus=true" >> "$GITHUB_OUTPUT"
           echo "Non-Quartus section (make) — skipping native Quartus build."
           exit 0
         fi
-        echo "skip=false" >> "$GITHUB_OUTPUT"
-        ver=$(QUARTUS_NATIVE_OVERRIDE='<<QUARTUS_NATIVE>>' ./.github/detect_quartus_version.sh "${first_input}")
+        echo "skip_quartus=false" >> "$GITHUB_OUTPUT"
+        matrix=$(./.github/emit_matrix.sh '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>')
+        echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+        echo "Matrix: ${matrix}"
+
+    - name: Merge upstream HEAD (once, pre fan-out)
+      if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
+      id: merge
+      run: ./.github/unstable_merge.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.preflight.outputs.matrix) }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1   # pinned SHA, tree only — no history walked here
+
+    - name: Resolve Quartus Standard version
+      id: mode
+      run: |
+        ver=$(QUARTUS_NATIVE_OVERRIDE='<<QUARTUS_NATIVE>>' ./.github/detect_quartus_version.sh '${{ matrix.input }}')
         echo "version=${ver}" >> "$GITHUB_OUTPUT"
-        echo "Native Quartus Standard build: ${ver}"
+        echo "Native Quartus Standard build for ${{ matrix.core }}: ${ver}"
 
     - name: Quartus license
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       run: ./.github/materialize_quartus_license.sh
       env:
         QUARTUS_LICENSE: ${{ secrets.QUARTUS_LICENSE }}
         QUARTUS_LICENSE_MAC: ${{ secrets.QUARTUS_LICENSE_MAC }}
 
     - name: Quartus image or install
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       uses: ./.github/actions/quartus-image-or-install
       with:
         version: ${{ steps.mode.outputs.version }}
@@ -72,9 +107,8 @@ jobs:
         install-repo: <<QUARTUS_INSTALL_REPO>>
         pull-token: ${{ secrets.GHCR_PULL_TOKEN }}
 
-    - name: Build unstable RBF from upstream HEAD
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
-      run: ./.github/unstable_release.sh <<MAINTAINER_EMAILS>>
+    - name: Build unstable RBF leg
+      run: ./.github/unstable_build.sh '${{ matrix.core }}' '${{ matrix.input }}' '${{ matrix.output }}' '${{ needs.preflight.outputs.timestamp }}' '${{ needs.preflight.outputs.upstream_sha }}' -- <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
@@ -82,20 +116,59 @@ jobs:
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
         GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # key gate v1.5: MASTER_ROOT for SipHash MAC
-        # unstable_release.sh materialises sys/db9_key_secret.vh from this env
-        # var before Quartus compile (identical handling to sync_release.yml).
-        # 64 hex chars = 32 bytes. KEEP THIS SECRET.
+        # key gate v1.5: MASTER_ROOT for SipHash MAC — materialize_secret.sh
+        # writes sys/db9_key_secret.vh from this before Quartus. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
 
-    - name: Upload Quartus reports
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
+    - name: Upload RBF artifact
       uses: actions/upload-artifact@v4
       with:
-        name: quartus-reports
+        name: rbf-${{ matrix.core }}
+        path: dist/
+        if-no-files-found: error
+
+    - name: Upload Quartus reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quartus-reports-${{ matrix.core }}
         path: |
           output_files/*.sta.summary
           output_files/*.sta.rpt
           output_files/*.fit.summary
 
         if-no-files-found: ignore
+
+  publish:
+    needs: [preflight, build]
+    # !cancelled() (not needs.build.result == 'success') so a partial set still
+    # publishes — fail-fast:false keeps siblings building.
+    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1   # only .github scripts needed here
+
+    - name: Download built RBFs
+      uses: actions/download-artifact@v4
+      # zero artifacts (all legs failed) → empty dist/ → unstable_publish.sh
+      # no-ops. Also tolerates a transient download error the same way; the
+      # all-fail and flaky-download cases are intentionally indistinguishable
+      # for this partial-publish channel.
+      continue-on-error: true
+      with:
+        pattern: rbf-*
+        path: dist
+        merge-multiple: true
+
+    - name: Publish unstable release
+      run: ./.github/unstable_publish.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        UPSTREAM_SHA: ${{ needs.preflight.outputs.upstream_sha }}
+        MASTER_SHA: ${{ needs.preflight.outputs.master_sha }}
+        BRANCH_SHA: ${{ needs.preflight.outputs.build_sha }}
+        SOURCE_HASH: ${{ needs.preflight.outputs.source_hash }}
+        TIMESTAMP: ${{ needs.preflight.outputs.timestamp }}

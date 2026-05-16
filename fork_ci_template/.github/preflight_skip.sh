@@ -73,4 +73,9 @@ if [[ "${FORCED:-false}" != "true" && -n "${PREV_HASH}" && "${PREV_HASH}" == "${
     exit 0
 fi
 
+# Hand the hash to release_publish.sh so it records the same value in the
+# release body without recomputing it (and without a redundant submodule
+# init) on a different runner — mirrors how the unstable channel threads
+# source_hash from unstable_merge.sh to unstable_publish.sh.
+emit_out source_hash "${CURRENT_SOURCE_HASH}"
 emit_skip false
