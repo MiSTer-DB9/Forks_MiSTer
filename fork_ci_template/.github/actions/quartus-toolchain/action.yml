@@ -1,0 +1,158 @@
+name: Resolve Quartus toolchain
+description: >
+  Resolve a Quartus Standard toolchain for the build, cheapest path first.
+  Three durable, self-healing tiers:
+
+    1. GH Actions cache (warm, repo-local, fastest). HIT => extract the pruned
+       tree to /opt/intelFPGA/<ver>, export QUARTUS_NATIVE_HOME. Common path;
+       steady-state runs never leave the runner.
+    2. Cache MISS => pull the PRIVATE ghcr *tarball artifact* (a bare zstd tar,
+       NOT a docker image) via `oras`, using the org GHCR_PULL_TOKEN. Extract,
+       then repopulate the Actions cache so the next run is tier 1. Durable,
+       survives cache eviction, works cross-repo.
+    3. Cache miss AND no artifact (version never published) => provision
+       natively (provision_quartus_native.sh), tar, save the Actions cache, and
+       best-effort `oras push` the artifact so tier 2 works next time.
+
+  Exports QUARTUS_NATIVE_HOME only; .github/lib/quartus_build.sh compiles in a
+  stock ubuntu:24.04 with the tree mounted (the FlexLM-required
+  `docker run --mac-address`). The Intel/Altera EULA forbids public
+  redistribution, so the ghcr package MUST stay Private.
+
+inputs:
+  version:
+    description: resolved Quartus Standard key, e.g. 17.0std
+    required: true
+  device:
+    description: Quartus device key (Cyclone V)
+    required: false
+    default: c5
+  install-repo:
+    description: git URL of the quartus-install repo (tier-3 provision)
+    required: true
+  artifact-repo:
+    description: private ghcr repo holding the tarball artifact (no tag)
+    required: false
+    default: ghcr.io/mister-db9/quartus-native
+  pull-token:
+    description: org GHCR_PULL_TOKEN (read:packages) for the private oras pull
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Restore Quartus native tree cache
+      id: q_cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ runner.temp }}/quartus.tar
+        key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
+
+    - name: Resolve Quartus toolchain (cache | oras artifact | provision)
+      id: sel
+      shell: bash
+      env:
+        CACHE_HIT: ${{ steps.q_cache.outputs.cache-hit }}
+        VERSION: ${{ inputs.version }}
+        DEVICE: ${{ inputs.device }}
+        INSTALL_REPO: ${{ inputs.install-repo }}
+        ARTIFACT_REPO: ${{ inputs.artifact-repo }}
+        PULL_TOKEN: ${{ inputs.pull-token }}
+        TARBALL: ${{ runner.temp }}/quartus.tar
+        ARTIFACT_TYPE: application/vnd.misterdb9.quartus.tarball
+      run: |
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        source ./.github/retry.sh
+
+        T="/opt/intelFPGA/${VERSION}"
+        REF="${ARTIFACT_REPO}:${VERSION}"
+        ZST="${TARBALL}.zst"
+        # Default: nothing was provisioned (tier 1 or 2) -> no cache save.
+        echo "provisioned=false" >> "${GITHUB_OUTPUT}"
+
+        save_cache_native() {
+            # Single-source the tier-1 cache contract: tar of the absolute
+            # tree, restored with `tar -xf -C /`. Byte-compatible with the
+            # pre-existing quartus-${VERSION}-${DEVICE}-v1 caches.
+            sudo tar -cf "${TARBALL}" "${T}"
+        }
+
+        # ---- Tier 1: warm Actions cache (common, fastest) -----------------
+        if [ "${CACHE_HIT}" = "true" ]; then
+            echo "::group::Tier 1 — Actions cache hit"
+            sudo mkdir -p "${T%/*}"
+            sudo tar -xf "${TARBALL}" -C /
+            rm -f "${TARBALL}"
+            echo "QUARTUS_NATIVE_HOME=${T}" >> "${GITHUB_ENV}"
+            echo "::endgroup::"
+            exit 0
+        fi
+
+        # oras is needed for tier 2 (and tier 3 push). Cheap, idempotent.
+        ./.github/install_oras.sh
+        if [ -n "${PULL_TOKEN}" ]; then
+            echo "${PULL_TOKEN}" | oras login ghcr.io -u x-access-token --password-stdin
+        fi
+
+        # ---- Tier 2: private ghcr tarball artifact ------------------------
+        # Only treat the tag as ours if its manifest carries our artifactType
+        # — guards against a leftover docker image at the same tag.
+        ART_TYPE="$(oras manifest fetch "${REF}" 2>/dev/null | jq -r '.artifactType // ""' || true)"
+        if [ "${ART_TYPE}" = "${ARTIFACT_TYPE}" ]; then
+            echo "::group::Tier 2 — oras pull ${REF}"
+            OUT="$(mktemp -d)"
+            retry -n 4 -d 15 -- oras pull "${REF}" -o "${OUT}"
+            sudo mkdir -p "${T%/*}"
+            zstd -dq -c "${OUT}/quartus.tar.zst" | sudo tar -xf - -C /
+            rm -rf "${OUT}"
+            # Repopulate the warm cache so the next run is tier 1.
+            save_cache_native
+            echo "QUARTUS_NATIVE_HOME=${T}" >> "${GITHUB_ENV}"
+            echo "provisioned=true" >> "${GITHUB_OUTPUT}"
+            echo "::endgroup::"
+            exit 0
+        fi
+        echo "No tarball artifact at ${REF} (artifactType='${ART_TYPE:-none}')"
+
+        # ---- Tier 3: native provision (self-heal: publish artifact) -------
+        echo "::group::Tier 3 — provision Quartus ${VERSION}"
+        QUARTUS_VERSION="${VERSION}" \
+        QUARTUS_DEVICE="${DEVICE}" \
+        QUARTUS_INSTALL_REPO="${INSTALL_REPO}" \
+        QUARTUS_TARGET="${T}" \
+            ./.github/provision_quartus_native.sh
+        save_cache_native
+        echo "QUARTUS_NATIVE_HOME=${T}" >> "${GITHUB_ENV}"
+        echo "provisioned=true" >> "${GITHUB_OUTPUT}"
+        # Best-effort publish so every other fork/run takes tier 2 next time.
+        # Needs a write-capable token; PULL_TOKEN is read-only, so this only
+        # succeeds where a packages:write token is logged in (the central
+        # publish_quartus_artifact.yml). Failure here is non-fatal.
+        if zstd -q -12 --long -T0 -o "${ZST}" "${TARBALL}" 2>/dev/null; then
+            ( cd "$(dirname "${ZST}")" \
+              && retry -n 3 -d 20 -- oras push "${REF}" \
+                   --artifact-type "${ARTIFACT_TYPE}" \
+                   "$(basename "${ZST}"):application/zstd" \
+            ) && echo "Published artifact ${REF}" \
+              || echo "::notice::oras push ${REF} failed (read-only token?) — tier 3 only, not fatal"
+            rm -f "${ZST}"
+        fi
+        echo "::endgroup::"
+
+    - name: Save Quartus native tree cache
+      # Tiers 2 and 3 produced a fresh ${runner.temp}/quartus.tar; tier 1
+      # already had a cache entry (skip). Best-effort: a >10 GB entry just
+      # falls back to a clean miss next run.
+      if: steps.q_cache.outputs.cache-hit != 'true' && steps.sel.outputs.provisioned == 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ runner.temp }}/quartus.tar
+        key: quartus-${{ inputs.version }}-${{ inputs.device }}-v1
+
+    - name: Free Quartus tarball
+      if: always()
+      shell: bash
+      run: rm -f "${{ runner.temp }}/quartus.tar" "${{ runner.temp }}/quartus.tar.zst"

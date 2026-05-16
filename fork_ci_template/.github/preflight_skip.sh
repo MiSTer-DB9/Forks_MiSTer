@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # stable pre-flight skip check
 #
-# Runs right after actions/checkout, BEFORE the Resolve / Cache & load Quartus
-# image workflow steps. Two early-exit paths short-circuit the docker image
-# work via the workflow step's `if: steps.preflight.outputs.skip != 'true'`:
+# Runs right after actions/checkout, BEFORE the Resolve Quartus toolchain +
+# compile workflow steps. Two early-exit paths short-circuit the toolchain
+# resolve + Quartus compile via the workflow step's
+# `if: steps.preflight.outputs.skip != 'true'`:
 #
 #  1. Pristine-upstream tripwire — refuse to build an un-ported fork's first
 #     BOT-setup push as a stock-upstream RBF.

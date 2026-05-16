@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Compute the deduplicated set of Quartus *Standard* versions actually needed
-# across every fork in Forks.ini, so build_quartus_image.yml prebuilds exactly
-# those ghcr images (no hardcoded list — auto-tracks new forks / .qsf bumps).
+# across every fork in Forks.ini, so publish_quartus_artifact.yml publishes
+# exactly those ghcr tarball artifacts (no hardcoded list — auto-tracks new
+# forks / .qsf bumps).
 #
 # Per fork section:
 #   - COMPILATION_INPUT = make            -> not a Quartus core, skip
