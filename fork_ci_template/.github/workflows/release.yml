@@ -77,13 +77,14 @@ jobs:
         QUARTUS_LICENSE: ${{ secrets.QUARTUS_LICENSE }}
         QUARTUS_LICENSE_MAC: ${{ secrets.QUARTUS_LICENSE_MAC }}
 
-    - name: Cache & install native Quartus
+    - name: Quartus image or install
       if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
-      uses: ./.github/actions/quartus-install-cache
+      uses: ./.github/actions/quartus-image-or-install
       with:
         version: ${{ steps.mode.outputs.version }}
         device: c5
         install-repo: <<QUARTUS_INSTALL_REPO>>
+        pull-token: ${{ secrets.GHCR_PULL_TOKEN }}
 
     - name: Build stable RBF from fork HEAD
       if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
@@ -91,7 +92,9 @@ jobs:
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
+        QUARTUS_NATIVE_IMAGE: ${{ env.QUARTUS_NATIVE_IMAGE }}
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
+        GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
         UPSTREAM_RELEASE_SHA: ${{ github.event.inputs.upstream_release_sha }}

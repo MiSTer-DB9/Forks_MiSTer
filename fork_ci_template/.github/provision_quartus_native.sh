@@ -13,11 +13,18 @@
 # Notes:
 #   - quartus-install.py's --prune deletes the downloaded *.run/*.qdz
 #     INSTALLERS only, not the installed tree; prune_quartus_tree.sh trims the
-#     installed tree separately to fit the 10 GB actions/cache cap.
+#     installed tree separately, dropping only components unreachable from a
+#     headless compile (GUI/docs/sims/Nios EDS/logs) — not a size prune.
 #   - Legacy download.altera.com URLs are flaky; the whole install is wrapped
 #     in retry to ride out transient download failures.
 
 set -euo pipefail
+
+# Privilege prefix. Empty when already root — the docker image build
+# (quartus-native.Dockerfile) reuses this script verbatim as root with SUDO="",
+# so the install/prune logic stays single-sourced between CI provision fallback
+# and the prebuilt image.
+SUDO="${SUDO-sudo}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=retry.sh
@@ -30,15 +37,15 @@ QUARTUS_TARGET="${QUARTUS_TARGET:?QUARTUS_TARGET env not set}"
 
 # aria2c (parallel downloader required by quartus-install.py) is NOT preinstalled
 # on ubuntu-latest; build-essential covers --fix-libpng / --fix-libncurses.
-retry -- sudo apt-get update
-retry -- sudo apt-get install -y aria2 build-essential
+retry -- ${SUDO} apt-get update
+retry -- ${SUDO} apt-get install -y aria2 build-essential
 
 GIT_TMP="$(mktemp -d)"
 trap 'rm -rf "${GIT_TMP}"' EXIT
 retry -- git clone --depth 1 "${QUARTUS_INSTALL_REPO}" "${GIT_TMP}/qi"
 
-sudo mkdir -p "${QUARTUS_TARGET%/*}"
-sudo chown "$(id -u):$(id -g)" "${QUARTUS_TARGET%/*}"
+${SUDO} mkdir -p "${QUARTUS_TARGET%/*}"
+${SUDO} chown "$(id -u):$(id -g)" "${QUARTUS_TARGET%/*}"
 
 # aria2c downloads into cwd. ubuntu-latest's / has ~14 GB free which the
 # installers + temporaries can blow through; $RUNNER_TEMP lives on the larger

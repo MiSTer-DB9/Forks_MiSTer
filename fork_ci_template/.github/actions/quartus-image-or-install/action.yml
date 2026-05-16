@@ -1,0 +1,60 @@
+name: Quartus image or install
+description: >
+  Prefer the prebuilt PRIVATE ghcr Quartus image for the resolved Standard
+  version: if it exists, export QUARTUS_NATIVE_IMAGE and skip provisioning.
+  Otherwise fall back to the quartus-install-cache action (provision + cache),
+  which exports QUARTUS_NATIVE_HOME. quartus_build.sh picks the path from
+  whichever of the two env vars is set.
+
+inputs:
+  version:
+    description: resolved Quartus Standard key, e.g. 17.0std
+    required: true
+  device:
+    description: Quartus device key (Cyclone V)
+    required: false
+    default: c5
+  install-repo:
+    description: git URL of the quartus-install repo (fallback path)
+    required: true
+  image-repo:
+    description: private ghcr image repo (no tag)
+    required: false
+    default: ghcr.io/mister-db9/quartus-native
+  pull-token:
+    description: org GHCR_PULL_TOKEN (read:packages) for the private pull
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Probe prebuilt Quartus image
+      id: probe
+      shell: bash
+      env:
+        IMAGE_REPO: ${{ inputs.image-repo }}
+        IMAGE_VERSION: ${{ inputs.version }}
+        PULL_TOKEN: ${{ inputs.pull-token }}
+      run: |
+        set -euo pipefail
+        IMG="${IMAGE_REPO}:${IMAGE_VERSION}"
+        if [ -n "${PULL_TOKEN}" ]; then
+          echo "${PULL_TOKEN}" | docker login ghcr.io -u x-access-token --password-stdin
+        fi
+        if docker manifest inspect "${IMG}" >/dev/null 2>&1; then
+          echo "Prebuilt image available: ${IMG}"
+          echo "QUARTUS_NATIVE_IMAGE=${IMG}" >> "${GITHUB_ENV}"
+          echo "have_image=true" >> "${GITHUB_OUTPUT}"
+        else
+          echo "No prebuilt image ${IMG} — falling back to provision + cache"
+          echo "have_image=false" >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Provision + cache (fallback)
+      if: steps.probe.outputs.have_image != 'true'
+      uses: ./.github/actions/quartus-install-cache
+      with:
+        version: ${{ inputs.version }}
+        device: ${{ inputs.device }}
+        install-repo: ${{ inputs.install-repo }}
