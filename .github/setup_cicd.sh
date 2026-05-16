@@ -18,6 +18,10 @@ setup_cicd_on_fork() {
     local FORK_REPO="$3"
     local MAIN_BRANCH="$4"
     local UPSTREAM_BRANCH="$5"
+    # Positional slot kept so the xargs arg map stays aligned; only Main_DB9's
+    # separate release_v2 pipeline still consumes QUARTUS_IMAGE — it is no
+    # longer templated into the FPGA workflows (native Quartus Standard only).
+    # shellcheck disable=SC2034
     local QUARTUS_IMAGE="$6"
     local COMPILATION_INPUT="$7"
     local COMPILATION_OUTPUT="$8"
@@ -31,10 +35,11 @@ setup_cicd_on_fork() {
     # to RELEASE_CORE_NAME via the aggregation below, overridden in Forks.ini for
     # variant-only sections (e.g. NeoGeo_24MHz_cpu_only → NeoGeo).
     local UPSTREAM_CORE_NAME="${11:-${RELEASE_CORE_NAME}}"
-    # Optional per-section native Quartus Standard opt-in (quartus-install.py
-    # version key, e.g. "17.0std", or "auto" to derive from the qsf). Empty for
-    # every fork except the pilot → docker Quartus Lite path stays unchanged.
-    local QUARTUS_NATIVE="${12:-}"
+    # Native Quartus Standard version key passed to QUARTUS_NATIVE_OVERRIDE in
+    # the workflow. "auto" (default) derives it from the core's .qsf
+    # LAST_QUARTUS_VERSION; a per-section Forks.ini value (e.g. "17.0std")
+    # pins it. Native Standard is the only FPGA build path now.
+    local QUARTUS_NATIVE="${12:-auto}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -111,7 +116,6 @@ setup_cicd_on_fork() {
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         ${TEMP_DIR}/.github/workflows/sync_release.yml
     # unstable channel templating (mirrors sync_release sed pair)
     sed -i \
@@ -129,7 +133,6 @@ setup_cicd_on_fork() {
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         ${TEMP_DIR}/.github/workflows/unstable_release.yml
@@ -147,7 +150,6 @@ setup_cicd_on_fork() {
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
-        -e "s%<<QUARTUS_IMAGE>>%${QUARTUS_IMAGE}%g" \
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
@@ -237,11 +239,15 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     # Group siblings share fork_repo|main_branch → must agree on upstream_branch;
     # primary wins (same rule as UPSTREAM_REPO above).
     _UPSTREAM_BRANCH="${_primary[upstream_branch]:-${_primary[main_branch]}}"
+    # Retained only for Main_DB9's separate release_v2 pipeline (gcc-arm
+    # cross-compile via `make`); no longer templated into the FPGA workflows
+    # (they all use native Quartus Standard now). Kept as inert arg-6 plumbing.
     _QUARTUS_IMAGE="${_primary[quartus_image]:-}"
-    # Native Quartus Standard opt-in (per-section, optional). Empty for all but
-    # the pilot fork; siblings sharing a repo follow the primary like
-    # QUARTUS_IMAGE above.
-    _QUARTUS_NATIVE="${_primary[quartus_native]:-}"
+    # Native Quartus Standard version selector (per-section, optional).
+    # Defaults to "auto" → detect_quartus_version.sh parses the .qsf; a
+    # Forks.ini value (e.g. "17.0std") pins it. Siblings sharing a repo follow
+    # the primary like QUARTUS_IMAGE above.
+    _QUARTUS_NATIVE="${_primary[quartus_native]:-auto}"
     _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
     unset -n _primary
 

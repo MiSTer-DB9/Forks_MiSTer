@@ -48,51 +48,37 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
 
-    # Native (Quartus Standard) vs docker (Quartus Lite) is a per-fork opt-in:
-    # `<<QUARTUS_NATIVE>>` is empty for every fork except the pilot, so the
-    # else-branch keeps the docker path byte-identical for all others.
-    - name: Resolve build mode
+    # All FPGA forks build with native Quartus *Standard* in an ubuntu:24.04
+    # container (no more docker Quartus Lite path). The Standard version is
+    # `<<QUARTUS_NATIVE>>` — Forks.ini per-fork pin (e.g. 17.0std) or `auto`
+    # (default) to derive it from the core's .qsf LAST_QUARTUS_VERSION.
+    # `skip=true` for a non-Quartus section (COMPILATION_INPUT=make, e.g.
+    # Main_DB9's separate release_v2 pipeline) so the templated workflow is an
+    # inert no-op there instead of hard-failing on a missing .qsf.
+    - name: Resolve Quartus Standard version
       if: steps.preflight.outputs.skip != 'true'
       id: mode
       run: |
-        native='<<QUARTUS_NATIVE>>'
-        if [ -n "${native}" ]; then
-          first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
-          ver=$(QUARTUS_NATIVE_OVERRIDE="${native}" ./.github/detect_quartus_version.sh "${first_input}")
-          echo "native=true"    >> "$GITHUB_OUTPUT"
-          echo "version=${ver}" >> "$GITHUB_OUTPUT"
-          echo "Native Quartus Standard build: ${ver}"
-        else
-          echo "native=false" >> "$GITHUB_OUTPUT"
-          echo "Docker Quartus Lite build"
-        fi
-
-    - name: Resolve Quartus image
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native != 'true'
-      id: image
-      run: |
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
-        image=$(./.github/detect_quartus_image.sh "${first_input}")
-        echo "image=${image}" >> "$GITHUB_OUTPUT"
-        echo "Resolved Quartus image: ${image}"
-      env:
-        QUARTUS_IMAGE_OVERRIDE: <<QUARTUS_IMAGE>>
-
-    - name: Cache & load Quartus image
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native != 'true'
-      uses: ./.github/actions/docker-cache-load
-      with:
-        image: ${{ steps.image.outputs.image }}
+        if [ "${first_input}" = "make" ]; then
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "Non-Quartus section (make) — skipping native Quartus build."
+          exit 0
+        fi
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+        ver=$(QUARTUS_NATIVE_OVERRIDE='<<QUARTUS_NATIVE>>' ./.github/detect_quartus_version.sh "${first_input}")
+        echo "version=${ver}" >> "$GITHUB_OUTPUT"
+        echo "Native Quartus Standard build: ${ver}"
 
     - name: Quartus license
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native == 'true'
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       run: ./.github/materialize_quartus_license.sh
       env:
         QUARTUS_LICENSE: ${{ secrets.QUARTUS_LICENSE }}
         QUARTUS_LICENSE_MAC: ${{ secrets.QUARTUS_LICENSE_MAC }}
 
     - name: Cache & install native Quartus
-      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.native == 'true'
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       uses: ./.github/actions/quartus-install-cache
       with:
         version: ${{ steps.mode.outputs.version }}
@@ -100,12 +86,11 @@ jobs:
         install-repo: <<QUARTUS_INSTALL_REPO>>
 
     - name: Build stable RBF from fork HEAD
-      if: steps.preflight.outputs.skip != 'true'
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       run: ./.github/release.sh <<MAINTAINER_EMAILS>>
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
-        QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
-        QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.native == 'true' && steps.mode.outputs.version || '' }}
+        QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         FORCED: ${{ github.event.inputs.forced }}
@@ -115,7 +100,7 @@ jobs:
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
 
     - name: Upload Quartus reports
-      if: steps.preflight.outputs.skip != 'true'
+      if: steps.preflight.outputs.skip != 'true' && steps.mode.outputs.skip != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: quartus-reports

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Resolve Quartus docker image for build.
 #
+# Retained for the Main_MiSTer make/gcc-arm pipeline only. All FPGA forks now
+# build with native Quartus Standard via detect_quartus_version.sh; this script
+# is no longer on their build path.
+#
 # Priority:
 #   1. $QUARTUS_IMAGE_OVERRIDE — full image string from Forks.ini (e.g.
 #      Main_MiSTer's gcc-arm tag, or a per-core pin to work around a Quartus bug)
