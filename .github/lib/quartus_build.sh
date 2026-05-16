@@ -177,3 +177,36 @@ build_cores() {
         UPLOAD_FILES+=("/tmp/${RBF_NAME}")
     done
 }
+
+# build_leg <LABEL> <RBF_INFIX> <core> <input> <output> -- <notify-recipient>...
+#
+# One matrix leg's full build: set the single-element CORE_NAME/COMPILATION_*
+# arrays build_cores consumes, materialise the secret, compile, stage the RBF
+# into dist/ for the publish fan-in. Shared by release_build.sh and
+# unstable_build.sh — they differ only in LABEL and RBF_INFIX. The locals are
+# visible to build_cores via bash dynamic scope.
+#
+# `git submodule update` is .gitmodules-guarded: an unconditional update on a
+# submodule-less tree (most MiSTer cores) is pure overhead and a no-op anyway.
+build_leg() {
+    local LABEL="$1" RBF_INFIX="$2"
+    local CORE_NAME=("$3") COMPILATION_INPUT=("$4") COMPILATION_OUTPUT=("$5")
+    shift 5
+    [[ "${1:-}" == "--" ]] && shift
+
+    resolve_quartus_env
+    if [[ -f .gitmodules ]]; then
+        git submodule update --init --recursive
+    fi
+    ./.github/materialize_secret.sh
+    quartus_build_preflight
+
+    local UPLOAD_FILES=()
+    build_cores "${LABEL}" "${RBF_INFIX}" -- "$@"
+
+    mkdir -p dist
+    cp "${UPLOAD_FILES[@]}" dist/
+    echo
+    echo "Staged for publish:"
+    ls -1 dist/
+}

@@ -1,88 +1,57 @@
 #!/usr/bin/env bash
-# Stable channel: build fork HEAD, publish to a per-commit immutable tag
-# `stable/<MAIN_BRANCH>/<YYYYMMDD>-<sha7>` with a single GitHub Release on top.
-# Distribution finds the newest one per variant via /releases?per_page=N
-# filtered by tag prefix. Asset name <Core>_YYYYMMDD_<sha7>.<ext> carries
-# provenance even after the RBF leaves the release.
+# Stable publish fan-in — gather the per-core RBFs the build matrix staged
+# (downloaded into dist/ by the workflow), record the body source hash, inherit
+# upstream provenance, create/replace the immutable
+# stable/<MAIN_BRANCH>/<YYYYMMDD>-<sha7> release bundling every variant, prune.
+#
+# Runs ONCE after the parallel build legs. Partial-publish: whatever RBFs
+# landed in dist/ ship; a core whose Quartus failed is simply absent (it
+# already emailed via notify_error.sh in its leg, and Distribution keeps the
+# prior RBF for that missing variant).
+#
+# Env contract (set by the workflow from preflight job outputs):
+#   BUILD_SHA SOURCE_HASH DATE_STAMP TIMESTAMP GITHUB_TOKEN GITHUB_REPOSITORY
+#   UPSTREAM_RELEASE_SHA / UPSTREAM_HEAD_AT_SYNC (workflow_dispatch inputs, may be empty)
+#   RETENTION (optional, default 0 = unbounded)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=retry.sh
 source "${SCRIPT_DIR}/retry.sh"
-# shellcheck source=compute_source_hash.sh
-source "${SCRIPT_DIR}/compute_source_hash.sh"
-# shellcheck source=quartus_build.sh
-source "${SCRIPT_DIR}/quartus_build.sh"
 
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
 MAIN_BRANCH="<<MAIN_BRANCH>>"
-COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
-COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
-# Native Quartus Standard only: QUARTUS_NATIVE_VERSION (resolved std key from
-# the workflow's Resolve-Quartus-Standard-version step) + QUARTUS_NATIVE_HOME
-# (/opt/intelFPGA/<ver>, exported by the quartus-install-cache action). Both
-# required.
-resolve_quartus_env
-
 TAG_PREFIX="stable/${MAIN_BRANCH}/"
 RETENTION="${RETENTION:-0}"
 
-# Pristine-upstream tripwire and source-hash skip both run pre-checkout in the
-# workflow's "Pre-flight skip check" step (./.github/preflight_skip.sh). If we
-# reach this script the preflight emitted skip=false, so neither gate fires
-# again here — single source of truth, no duplication.
-
-export GIT_MERGE_AUTOEDIT=no
-git config --global user.email "theypsilon@gmail.com"
-git config --global user.name "The CI/CD Bot"
-
-if [[ -f .git/shallow ]]; then
-    retry -- git fetch origin --unshallow
-fi
-git checkout -qf "${MAIN_BRANCH}"
-git submodule update --init --recursive
-BUILD_SHA=$(git rev-parse HEAD)
+GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release}"
+BUILD_SHA="${BUILD_SHA:?BUILD_SHA env not set — should be a preflight job output}"
 BUILD_SHA7="${BUILD_SHA:0:7}"
+DATE_STAMP="${DATE_STAMP:?DATE_STAMP env not set — should be a preflight job output}"
+TIMESTAMP="${TIMESTAMP:?TIMESTAMP env not set — should be a preflight job output}"
+# preflight_skip.sh already computed this on the same pinned tree; reuse it so
+# the body records the exact value the next run's pre-check compares against
+# (no recompute, no redundant submodule init on this no-Quartus runner).
+CURRENT_SOURCE_HASH="${SOURCE_HASH:?SOURCE_HASH env not set — should be a preflight job output}"
 
-# materialize MASTER_ROOT secret before build
-./.github/materialize_secret.sh
-
-quartus_build_preflight
-
-# Hash again so the release body's `source_hash:` line below records the exact
-# tree state at build time. Excludes db9_key_secret.{h,vh} so this matches the
-# preflight value despite materialize_secret.sh having run in between.
-CURRENT_SOURCE_HASH=$(compute_source_hash)
+shopt -s nullglob
+UPLOAD_FILES=(dist/*)
+shopt -u nullglob
+if (( ${#UPLOAD_FILES[@]} == 0 )); then
+    echo "No RBFs in dist/ — every build leg failed (each already emailed via notify_error.sh). No release created."
+    exit 0
+fi
+echo "Publishing $(printf '%s ' "${UPLOAD_FILES[@]##*/}")"
 echo "Source hash: ${CURRENT_SOURCE_HASH}"
 
-TIMESTAMP=$(date -u +%Y%m%d_%H%M)
-DATE_STAMP=$(date -u +%Y%m%d)
 STABLE_TAG="${TAG_PREFIX}${DATE_STAMP}-${BUILD_SHA7}"
-UPLOAD_FILES=()
 
-build_cores STABLE "${DATE_STAMP}_${BUILD_SHA7}" -- "$@"
-
-# Provenance inheritance for push-triggered runs.
-#
-# release.yml fires on both `workflow_dispatch` (from sync_release.sh, which
-# passes upstream_release_sha/upstream_head_at_sync) and `on: push` (BOT CI/CD
-# setup commits, direct DB9 commits). On a push run github.event.inputs.* are
-# empty, so without this block the body would record blank upstream_* lines and
-# sync_dispatch.sh's _check_stable fast path would be defeated whenever the
-# newest stable/<branch>/ release is a push build.
-#
-# A push commit (DB9/CI change) does not merge upstream, so the upstream
-# release commit and upstream HEAD as of the last sync are unchanged by it —
-# inheriting the most recent populated values is accurate. Inheriting a stale
-# upstream_head_at_sync stays safe for the consumer: _check_stable only skips
-# when STORED_HEAD == current upstream HEAD, and a DB9-only push cannot move
-# upstream HEAD, so that equality only holds when skipping is genuinely correct.
-#
-# Only fill when empty — a real sync value from the dispatch inputs is never
-# overwritten. Two-step lookup mirrors preflight_skip.sh (gh release list
-# --json has no `body`; fetch tags newest-first, then gh release view each
-# until one yields a non-empty upstream_head_at_sync:).
+# Provenance inheritance for push-triggered runs: on a push run
+# github.event.inputs.* are empty, so without this the body would
+# record blank upstream_* lines and sync_dispatch.sh's _check_stable fast path
+# would be defeated whenever the newest stable/<branch>/ release is a push build.
+# Only fill when empty — a real sync value is never overwritten.
 if [[ -z "${UPSTREAM_RELEASE_SHA:-}" || -z "${UPSTREAM_HEAD_AT_SYNC:-}" ]]; then
     mapfile -t PREV_TAGS < <(
         gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
