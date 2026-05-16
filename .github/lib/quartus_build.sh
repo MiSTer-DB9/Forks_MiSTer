@@ -18,15 +18,20 @@
 #   - (native path only) have LM_LICENSE_FILE set by materialize_quartus_license.sh
 #   - run from the repo checkout root (notify_error.sh is ./.github/...)
 
-# QUARTUS_IMAGE (docker/Lite path) xor QUARTUS_NATIVE_VERSION+HOME (native/Std
-# path) — exactly one is active per build; require at least one. GITHUB_TOKEN
-# is needed by every gh release call in both callers.
+# Native Quartus *Standard* is the only build path: QUARTUS_NATIVE_VERSION
+# (resolved std key from the workflow's Resolve-Quartus-Standard-version step)
+# + QUARTUS_NATIVE_HOME (/opt/intelFPGA/<ver>, exported by the
+# quartus-install-cache action) — both required. GITHUB_TOKEN is needed by
+# every gh release call in both callers.
 resolve_quartus_env() {
-    QUARTUS_IMAGE="${QUARTUS_IMAGE:-}"
     QUARTUS_NATIVE_VERSION="${QUARTUS_NATIVE_VERSION:-}"
     QUARTUS_NATIVE_HOME="${QUARTUS_NATIVE_HOME:-}"
-    if [[ -z "${QUARTUS_NATIVE_VERSION}" && -z "${QUARTUS_IMAGE}" ]]; then
-        echo "::error::neither QUARTUS_IMAGE nor QUARTUS_NATIVE_VERSION set"
+    if [[ -z "${QUARTUS_NATIVE_VERSION}" ]]; then
+        echo "::error::QUARTUS_NATIVE_VERSION not set — native Quartus Standard is the only build path"
+        exit 1
+    fi
+    if [[ -z "${QUARTUS_NATIVE_HOME}" ]]; then
+        echo "::error::QUARTUS_NATIVE_HOME not set — quartus-install-cache must export it"
         exit 1
     fi
     GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env not set — required for gh release upload}"
@@ -85,62 +90,53 @@ build_cores() {
         fi
         echo
         echo "Building '${RBF_NAME}'..."
-        if [[ -n "${QUARTUS_NATIVE_VERSION}" ]]; then
-            # Native Quartus *Standard* in a stock ubuntu:24.04 container
-            # ONLY so `--mac-address` puts the license node-lock MAC on the
-            # container's eth0 (FlexLM hostid = its netns primary iface); host
-            # NIC untouched so Azure anti-spoof never severs the runner.
-            # Quartus 17's bundled quartus/linux64 still needs a handful of
-            # system X/glib/font libs (validated set below; libstdc++6/zlib1g
-            # already in the base, libpng/libncurses shimmed in-tree by
-            # --fix-libpng/--fix-libncurses). Its bundled 2017 libudev.so.1
-            # segfaults against glibc 2.39 with no in-container udevd
-            # (FlexLM hostid scan), so LD_PRELOAD the modern system libudev.
-            # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
-            # One apt per native build (~25 s) is negligible vs the Quartus
-            # run; inline avoids a custom image / GHCR / registry to maintain.
-            QRT_IMG="ubuntu:24.04"
-            QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
-            LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
-            # Re-derive the node-lock MAC from the license file itself (the
-            # single source of truth — no $GITHUB_ENV/sidecar to leak it in a
-            # later step's env: log group). Already ::add-mask::ed by
-            # materialize_quartus_license.sh; re-mask defensively. Never echo.
-            NODELOCK_MAC="$(grep -ioE 'HOSTID=[0-9A-Fa-f]{12}' "${LM_LICENSE_FILE}" \
-                | head -1 | sed 's/.*=//' | tr 'A-Z' 'a-z' \
-                | sed -E 's/(..)(..)(..)(..)(..)(..)/\1:\2:\3:\4:\5:\6/')"
-            if [[ ! "${NODELOCK_MAC}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
-                echo "::error::could not derive node-lock MAC from license"; exit 1
-            fi
-            echo "::add-mask::${NODELOCK_MAC}"
-            retry -- docker pull "${QRT_IMG}"
-            docker run --rm \
-                --mac-address "${NODELOCK_MAC}" \
-                -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro" \
-                -v "$(pwd):/project" -w /project \
-                -v "${LIC_DIR}:${LIC_DIR}:ro" \
-                -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}" \
-                -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}" \
-                -e "HOME=/tmp" \
-                -e "QRT_PKGS=${QRT_PKGS}" \
-                -e "QNH=${QUARTUS_NATIVE_HOME}" \
-                -e "QIN=${COMPILATION_INPUT[i]}" \
-                "${QRT_IMG}" \
-                bash -c 'set -e
-                export DEBIAN_FRONTEND=noninteractive
-                apt-get update -qq
-                apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
-                export LD_PRELOAD="$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)"
-                exec "${QNH}/quartus/bin/quartus_sh" --flow compile "${QIN}"' \
-                || _notify_build_fail
-        else
-            docker run --rm \
-                -v "$(pwd):/project" \
-                -e "COMPILATION_INPUT=${COMPILATION_INPUT[i]}" \
-                "${QUARTUS_IMAGE}" \
-                bash -c 'cd /project && /opt/intelFPGA_lite/quartus/bin/quartus_sh --flow compile "${COMPILATION_INPUT}"' \
-                || _notify_build_fail
+        # Native Quartus *Standard* in a stock ubuntu:24.04 container
+        # ONLY so `--mac-address` puts the license node-lock MAC on the
+        # container's eth0 (FlexLM hostid = its netns primary iface); host
+        # NIC untouched so Azure anti-spoof never severs the runner.
+        # Quartus 17's bundled quartus/linux64 still needs a handful of
+        # system X/glib/font libs (validated set below; libstdc++6/zlib1g
+        # already in the base, libpng/libncurses shimmed in-tree by
+        # --fix-libpng/--fix-libncurses). Its bundled 2017 libudev.so.1
+        # segfaults against glibc 2.39 with no in-container udevd
+        # (FlexLM hostid scan), so LD_PRELOAD the modern system libudev.
+        # HOME=/tmp = writable, host-config-free (no stray quartus2.ini).
+        # One apt per native build (~25 s) is negligible vs the Quartus
+        # run; inline avoids a custom image / GHCR / registry to maintain.
+        QRT_IMG="ubuntu:24.04"
+        QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
+        LIC_DIR="$(dirname "${LM_LICENSE_FILE}")"
+        # Re-derive the node-lock MAC from the license file itself (the
+        # single source of truth — no $GITHUB_ENV/sidecar to leak it in a
+        # later step's env: log group). Already ::add-mask::ed by
+        # materialize_quartus_license.sh; re-mask defensively. Never echo.
+        NODELOCK_MAC="$(grep -ioE 'HOSTID=[0-9A-Fa-f]{12}' "${LM_LICENSE_FILE}" \
+            | head -1 | sed 's/.*=//' | tr 'A-Z' 'a-z' \
+            | sed -E 's/(..)(..)(..)(..)(..)(..)/\1:\2:\3:\4:\5:\6/')"
+        if [[ ! "${NODELOCK_MAC}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
+            echo "::error::could not derive node-lock MAC from license"; exit 1
         fi
+        echo "::add-mask::${NODELOCK_MAC}"
+        retry -- docker pull "${QRT_IMG}"
+        docker run --rm \
+            --mac-address "${NODELOCK_MAC}" \
+            -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro" \
+            -v "$(pwd):/project" -w /project \
+            -v "${LIC_DIR}:${LIC_DIR}:ro" \
+            -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}" \
+            -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}" \
+            -e "HOME=/tmp" \
+            -e "QRT_PKGS=${QRT_PKGS}" \
+            -e "QNH=${QUARTUS_NATIVE_HOME}" \
+            -e "QIN=${COMPILATION_INPUT[i]}" \
+            "${QRT_IMG}" \
+            bash -c 'set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
+            export LD_PRELOAD="$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)"
+            exec "${QNH}/quartus/bin/quartus_sh" --flow compile "${QIN}"' \
+            || _notify_build_fail
 
         if [[ ! -f "${COMPILATION_OUTPUT[i]}" ]]; then
             echo "::error::Build succeeded but ${COMPILATION_OUTPUT[i]} missing"

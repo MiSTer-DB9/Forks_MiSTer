@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve a quartus-install.py Standard ("*std") version key for the native
-# (non-docker) build path. Sibling of detect_quartus_image.sh — that script
-# stays untouched because 160 forks still resolve a docker image through it.
+# Quartus Standard build path — the only FPGA build path now. (Sibling
+# detect_quartus_image.sh is retained for the Main_MiSTer gcc-arm pipeline.)
 #
 # Priority:
 #   1. $QUARTUS_NATIVE_OVERRIDE — explicit Forks.ini value (e.g. "17.0std").
