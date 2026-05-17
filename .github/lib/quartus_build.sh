@@ -128,8 +128,17 @@ build_cores() {
         # Provisioned/cached tree on the runner, stock ubuntu:24.04, the
         # validated X/glib/font libs apt'd per build. libstdc++6/zlib1g are in
         # the base; libpng/libncurses shimmed in-tree by
-        # --fix-libpng/--fix-libncurses.
-        local QRT_PKGS="libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
+        # --fix-libpng/--fix-libncurses. 'locales' + locale-gen below carry over
+        # the en_US.UTF-8 baking from the deleted quartus-native.Dockerfile:
+        # qenv.sh itself hard-exports LANG=en_US.UTF-8, so merely *generating*
+        # the locale is enough to silence its 'setlocale: LC_CTYPE' warning
+        # (cosmetic - RBF is locale-agnostic, compute_source_hash pins LC_ALL=C
+        # - but pollutes logs the rerun_transient classifier scans). No explicit
+        # export / -e / update-locale: a docker-run non-login 'bash -c' never
+        # sources /etc/default/locale (update-locale is a no-op here) and
+        # setting LANG/LC_ALL before locale-gen runs makes apt/perl in the
+        # install phase emit the very warning we're killing.
+        local QRT_PKGS="locales libglib2.0-0t64 libsm6 libice6 libxext6 libxft2 libxrender1 libxtst6 libxi6 libx11-6 libxcb1 libfontconfig1 libfreetype6 libudev1"
         retry -- docker pull ubuntu:24.04
         QRT_RUN+=( -v "${QUARTUS_NATIVE_HOME}:${QUARTUS_NATIVE_HOME}:ro"
                    -e "QRT_PKGS=${QRT_PKGS}"
@@ -137,7 +146,8 @@ build_cores() {
                    ubuntu:24.04 )
         APT_STEP='export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
-        apt-get install -y -qq --no-install-recommends ${QRT_PKGS}'
+        apt-get install -y -qq --no-install-recommends ${QRT_PKGS}
+        locale-gen en_US.UTF-8'
 
         # QNH defaults to QUARTUS_NATIVE_HOME; LD_PRELOAD points at the modern
         # system libudev installed by the per-build apt.
