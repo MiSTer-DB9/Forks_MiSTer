@@ -89,8 +89,16 @@ if [[ -z "${UPSTREAM_RELEASE_SHA:-}" || -z "${UPSTREAM_HEAD_AT_SYNC:-}" ]]; then
     fi
 fi
 
-# Body is flat: one build, one release, one set of metadata. `source_hash:` is
-# the contract with the next run's skip lookup.
+# Body is flat: one build, one release, one set of metadata. Only the four
+# lines below are load-bearing: `source_hash:` is the contract with the next
+# run's skip lookup (preflight_skip.sh); `upstream_release_sha:` /
+# `upstream_head_at_sync:` are the contract with sync_dispatch.sh's clone-free
+# fast path. branch/build_sha/build_ts were dropped — none were ever parsed
+# (branch is in the tag prefix, build_sha in the annotated tag's target, the
+# date in the tag + GH created_at). `build:` links the workflow run that
+# produced this release (it carries the *.sta Quartus timing artifacts);
+# same URL shape as notify_error.sh. Order kept coherent with the unstable
+# channel's per-variant stanza: build → identity SHAs → source_hash.
 release_body() {
     local retention_label
     if (( RETENTION == 0 )); then
@@ -101,12 +109,10 @@ release_body() {
     cat <<EOF
 Stable RBF build for \`${MAIN_BRANCH}\`. Retention: ${retention_label} per branch.
 
-branch:                  ${MAIN_BRANCH}
-build_sha:               ${BUILD_SHA}
-build_ts:                ${TIMESTAMP}
-source_hash:             ${CURRENT_SOURCE_HASH}
-upstream_release_sha:    ${UPSTREAM_RELEASE_SHA:-}
-upstream_head_at_sync:   ${UPSTREAM_HEAD_AT_SYNC:-}
+build:                 ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID:-}
+upstream_release_sha:  ${UPSTREAM_RELEASE_SHA:-}
+upstream_head_at_sync: ${UPSTREAM_HEAD_AT_SYNC:-}
+source_hash:           ${CURRENT_SOURCE_HASH}
 EOF
 }
 
