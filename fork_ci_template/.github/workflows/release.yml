@@ -50,6 +50,8 @@ jobs:
       date_stamp: ${{ steps.meta.outputs.date_stamp }}
       timestamp: ${{ steps.meta.outputs.timestamp }}
       matrix: ${{ steps.meta.outputs.matrix }}
+      derived_upstream_release_sha: ${{ steps.derive.outputs.derived_upstream_release_sha }}
+      derived_upstream_head_at_sync: ${{ steps.derive.outputs.derived_upstream_head_at_sync }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
@@ -83,6 +85,22 @@ jobs:
         matrix=$(./.github/emit_matrix.sh '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>')
         echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
         echo "Matrix: ${matrix}"
+
+    # Provenance fallback: on a push build with no inheritable seed (a fork
+    # that never had a real sync-dispatched run) derive upstream_* from git so
+    # the body isn't blank and sync_dispatch.sh's fast path arms. No-op (one
+    # API call, no fetch) once any prior release carries provenance — the
+    # cheap inherit path in release_publish.sh takes over then.
+    - name: Derive upstream provenance (fallback)
+      if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
+      id: derive
+      run: ./.github/derive_provenance.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        MAIN_BRANCH: <<MAIN_BRANCH>>
+        UPSTREAM_REPO: <<UPSTREAM_REPO>>
+        UPSTREAM_BRANCH: <<UPSTREAM_BRANCH>>
+        BUILD_SHA: ${{ steps.meta.outputs.build_sha }}
 
   build:
     needs: preflight
@@ -190,3 +208,5 @@ jobs:
         TIMESTAMP: ${{ needs.preflight.outputs.timestamp }}
         UPSTREAM_RELEASE_SHA: ${{ github.event.inputs.upstream_release_sha }}
         UPSTREAM_HEAD_AT_SYNC: ${{ github.event.inputs.upstream_head_at_sync }}
+        DERIVED_UPSTREAM_RELEASE_SHA: ${{ needs.preflight.outputs.derived_upstream_release_sha }}
+        DERIVED_UPSTREAM_HEAD_AT_SYNC: ${{ needs.preflight.outputs.derived_upstream_head_at_sync }}

@@ -161,6 +161,8 @@ setup_cicd_on_fork() {
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
+        -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         ${TEMP_DIR}/.github/workflows/release.yml
 
     DID_COMMIT=0
