@@ -1,0 +1,35 @@
+name: Regression Tests
+
+# Tier 1 canonical-HDL data-path regression. Self-contained in this repo
+# (only needs fork_ci_template/sys + test/sim), so it runs in CI and gates
+# the auto-sync that propagates canonical sources into every fork core.
+#
+# Tier 0 (porter golden/idempotency) and Tier 2 (Arduino HIL) need the full
+# MiSTer-DB9 working tree / real hardware and are maintainer-run — see
+# test/README.md.
+
+on:
+  push:
+    paths:
+      - 'fork_ci_template/sys/**'
+      - 'porting/port_core_full.py'
+      - 'porting/upgrade_pro_additive.py'
+      - 'test/**'
+      - '.github/workflows/regression_tests.yml'
+  pull_request:
+    paths:
+      - 'fork_ci_template/sys/**'
+      - 'porting/port_core_full.py'
+      - 'porting/upgrade_pro_additive.py'
+      - 'test/**'
+  workflow_dispatch:
+
+jobs:
+  tier1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: Tier 1 - canonical DB15 data-path sim
+        run: ./test/run_tier1.sh
