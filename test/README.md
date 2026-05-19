@@ -104,6 +104,29 @@ Forks_MiSTer/test/run_fleet_audit.sh --changed       # only git-dirty cores
 Maintainer pre-sync gate (needs the umbrella working tree with sibling core
 repos). Run before any canonical-`sys/` change and after any batch port.
 
+### Focused sweep — `run_joydb_semantic.sh`
+
+`lib/joydb_semantic_check.py` only, across the fleet, so the joydb role
+mapping can be eyeballed without the other fleet checks in the way (same
+single source of truth the fleet audit and `merge_validate.sh` use):
+
+```
+Forks_MiSTer/test/run_joydb_semantic.sh              # all ported cores
+Forks_MiSTer/test/run_joydb_semantic.sh --core GnW_MiSTer
+```
+
+- **FATAL** — P1/P2 role transpose (same joydb bit-set, swapped concat
+  order, a role bit `[10]`/`[11]` at a mismatched position, single shared
+  role in CONF_STR — Arcade-ComputerSpace/GnW class). Gates
+  `run_fleet_audit.sh` (hard) and `merge_validate.sh` (regression-only
+  delta — a benign upstream CONF_STR rename cannot wedge it). Exit 1.
+- **WARN** — advisory Start/Select/fire heuristics. Surfaced in
+  `run_fleet_audit.sh` as GitHub `::warning::` + a `$GITHUB_STEP_SUMMARY`
+  digest; never tokenised, never gates. Exit 0.
+
+Same maintainer-umbrella requirement as the fleet audit (needs sibling
+core repos checked out).
+
 **Baseline (2026-05): 141/145 PASS, 0 false positives, 4 genuine
 previously-unnoticed findings** — `C64_MiSTer` (`joy_raw` declared as a
 fork emu port but connected nowhere; every other core keeps it internal),
