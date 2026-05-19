@@ -25,6 +25,30 @@ Per core it runs:
    `.sv` from `*.qip`/`*.qsf`). **No hardcoded port names** — `.USER_OSD` is
    only an example; it equally catches a future missing `.USER_PP`/`.joy_raw`.
 2. **`lib/step6.sh`** (`step6_verify`) — the per-`<core>.sv` Step-6 checklist.
+3. **`lib/joydb_map_check.py`** — joydb→joystick **mux mapping** correctness.
+   `emu_portmap_check.py` proves the wrapper nets are *connected*; this proves
+   the hand-written per-core mux *body* (`joydb_Nena ? <arm> : <fallback>`)
+   maps them right. Balanced ternary-arm parse (handles `[hi:lo]` slices and
+   nested `?:`; the `<fallback>` is exempt — it legitimately chains USB wires
+   and other-player `joydb_Kena` *enables*). **FATAL** (gates): *P1/P2 leak* —
+   the selected arm reads a different `joydb_K[...]` bus than its `joydb_Mena`
+   gate (the ao486 `2b63c66` class, where player 2 mirrored player 1);
+   *out-of-range bit* — a `joydb_X[≥14]` ref (bits 15:14 are never live);
+   *missing `OSD_STATUS` guard* — a controller-data arm with no OSD mute
+   (ghost inputs while the menu is open). **FINDING** (non-gating, reported
+   for triage like the genuine findings below): *P1/P2 bit-set divergence* —
+   P2 references a different *set* of joydb bits than P1 (a button dropped or
+   added, not merely reordered: Arcade-Tecmo / SNES class). A pure P1↔P2
+   *order* swap is **not** reported — that is the deliberate fleet-wide
+   arcade convention (each player's `joydb[10]`=Start routes to that player's
+   own Start line, at a different joystick bit for P1 vs P2; see
+   Arcade-Galaga `// CO S2 S1`), correct by design on 60+ cores. Canonical
+   `joydb_1`/`joydb_2` layout: `[3:0]`=URDL, `[4..9]`=A/B/C/X/Y/Z (DB15
+   A..F), `[10]`=Start, `[11]`=Mode/Select/Coin (also Saturn R), `[12]`=Saturn
+   L, `[13]` unused, `[15:14]` never live. Self-tested by
+   `lib/test_joydb_map_check.py` (fixtures in `fixtures/joydb_map/`, run from
+   Tier 1). Also gated regression-only by `merge_validate.sh` (a merge that
+   introduces a new FATAL fails the unstable/stable canary ~12 h early).
 
 DB15-only scope is sufficient: DB9MD/DB15/Saturn all ride the same `joydb.sv`
 wrapper and the same `emu`/`sys_top` nets, so a wiring break breaks all three;
@@ -46,6 +70,15 @@ fork emu port but connected nowhere; every other core keeps it internal),
 UserIO Joystick selector silently dead), `SNES_MiSTer` (13/14 unbalanced
 `[MiSTer-DB9]` markers), `Menu_MiSTer` (no Pro markers / divergent minimal
 port). These are reported for maintainer triage, not auto-fixed.
+
+**joydb_map_check baseline (2026-05): 145/145 PASS, 0 FATAL, 2 non-gating
+findings** (`Arcade-Tecmo_MiSTer`, `SNES_MiSTer` — P1/P2 bit-set divergence,
+flagged for triage). Bringing-up the check found **11 genuine pre-existing
+bugs**, all fixed in the same change: 3 P1/P2 leaks (`C16`, `VIC20`,
+`Jupiter` — `joyb` read `joydb_1`, the ao486 class) and 8 missing OSD guards
+(`Arcade-Finalizer/IremM72/IronHorse/Jailbreak/ScooterShooter/TimePilot84`,
+`GnW`, `Arduboy` — `[15:0]`/non-`[31:0]` mux arms the porter's `[31:0]`-only
+`wrap_joystick_mux` never guarded).
 
 ---
 
@@ -88,6 +121,10 @@ then two self-checking testbenches:
 - `sim/tb_joydb_wrapper.sv` — `joydb.sv` mux: DB15 decode, `*_ena`,
   `USER_PP_DRIVE`/`USER_OUT_DRIVE` patterns, `joy_raw[15:14]` type,
   `USER_OSD` combo, Off-mode inert.
+- `lib/test_joydb_map_check.py` — `joydb_map_check.py` against
+  `fixtures/joydb_map/` (good / leak / out-of-range / missing-OSD /
+  divergence + the order-swap-not-misreported regression guard). Pure
+  Python, no iverilog.
 
 Both seed the inner `joydb15.v` `JCLOCKS` counter (no RTL initializer; FPGA
 powers it to 0, sim leaves it `X` and `X+1` stays `X`) — white-box, sim-only.

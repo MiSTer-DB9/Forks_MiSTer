@@ -29,6 +29,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORTMAP="${SCRIPT_DIR}/emu_portmap_check.py"
+JOYDBMAP="${SCRIPT_DIR}/joydb_map_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -46,9 +47,12 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #   portmap        emu_portmap_check.py exited non-zero (defect/parse error)
 #   no-core-sv     no <core>.sv resolvable (portmap could not pick a top)
 #   step6-<id>     a blocking Step-6 check FAILed (id in BLOCKING_STEP6)
+#   mapcheck       joydb_map_check.py FATAL (P1/P2 leak / out-of-range bit /
+#                  missing OSD_STATUS guard). Its non-gating FINDINGs (bit-set
+#                  divergence) never produce a token, so they cannot wedge.
 compute_tokens() {
   local dir="$1"
-  local pm rc=0 csv s6 toks=() id
+  local pm rc=0 csv s6 jrc=0 toks=() id
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] && toks+=("portmap")
   csv="$(printf '%s\n' "$pm" | extract_portmap_coresv)"
@@ -62,6 +66,8 @@ compute_tokens() {
         *" $id "*) toks+=("step6-$id") ;;
       esac
     done < <(printf '%s\n' "$s6" | sed -n 's/^  step6: FAIL \([^ ]*\).*/\1/p')
+    python3 "$JOYDBMAP" "$dir" "$csv" >/dev/null 2>&1 || jrc=$?
+    [ "$jrc" -ne 0 ] && toks+=("mapcheck")
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything

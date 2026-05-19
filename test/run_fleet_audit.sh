@@ -27,6 +27,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"          # umbrella MiSTer-DB9/
 PORTMAP="$HERE/lib/emu_portmap_check.py"
+JOYDBMAP="$HERE/lib/joydb_map_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 
@@ -45,7 +46,7 @@ mapfile -t cores < <(cd "$ROOT" && for d in */sys/joydb.sv; do
   [ -e "$d" ] && echo "${d%/sys/joydb.sv}"; done | sort)
 [ -n "$only" ] && cores=("$only")
 
-pass=0; failn=0; faillist=()
+pass=0; failn=0; faillist=(); findn=0; findlist=()
 for c in "${cores[@]}"; do
   cd "$ROOT"
   [ -d "$c" ] || { echo "skip (missing): $c"; continue; }
@@ -61,19 +62,37 @@ for c in "${cores[@]}"; do
   if [ -n "$csv" ]; then
     if ! s6="$(step6_verify "$ROOT/$c" "$csv" 2>&1)"; then cfail+="step6 "; fi
     out+="$s6"$'\n'
+    # joydb mux mapping correctness (P1/P2 leak / out-of-range bit / missing
+    # OSD_STATUS guard = FATAL; P1/P2 bit-set divergence = non-gating
+    # FINDING). Reuses the same resolved <core>.sv as step6 — no extra
+    # find_core_sv walk.
+    jm="$(python3 "$JOYDBMAP" "$ROOT/$c" "$csv" 2>&1)"; jrc=$?
+    out+="$jm"$'\n'
+    [ "$jrc" -ne 0 ] && cfail+="mapcheck "
   else
     cfail+="no-core-sv "
   fi
   if [ -z "$cfail" ]; then
-    pass=$((pass+1)); [ "$quiet" = 1 ] || echo "PASS  $c"
+    pass=$((pass+1))
+    if finds="$(printf '%s\n' "$out" | grep 'joydbmap: FINDING')"; then
+      findn=$((findn+1)); findlist+=("$c")
+      [ "$quiet" = 1 ] || echo "PASS  $c  (finding)"
+      printf '%s\n' "$finds" | sed 's/^/      /'
+    else
+      [ "$quiet" = 1 ] || echo "PASS  $c"
+    fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|portmap:' | sed 's/^/      /'
+    echo "$out" | grep -E 'FAIL|portmap:|joydbmap:' | sed 's/^/      /'
   fi
 done
 
 echo
-echo "==== fleet audit: ${pass} PASS / ${failn} FAIL / $((pass+failn)) cores ===="
+echo "==== fleet audit: ${pass} PASS / ${failn} FAIL / $((pass+failn)) cores" \
+     "(${findn} with non-gating findings) ===="
+if [ "$findn" -ne 0 ]; then
+  printf '  findings: %s\n' "${findlist[*]}"
+fi
 if [ "$failn" -ne 0 ]; then
   printf '  failing: %s\n' "${faillist[*]}"
   exit 1

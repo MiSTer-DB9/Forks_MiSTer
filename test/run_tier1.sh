@@ -63,5 +63,13 @@ else
   note "tb_joydb_wrapper FAIL"; sed 's/^/    /' "$WORK/cw.log" 2>/dev/null || true; fail=1
 fi
 
+echo "== Tier 1: joydb_map_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_joydb_map_check.py" >"$WORK/jm.log" 2>&1 \
+   && grep -q "JOYDBMAP selftest: PASS" "$WORK/jm.log"; then
+  note "joydb_map_check selftest PASS"
+else
+  note "joydb_map_check selftest FAIL"; sed 's/^/    /' "$WORK/jm.log"; fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER1: PASS"; exit 0; else echo "TIER1: FAIL"; exit 1; fi

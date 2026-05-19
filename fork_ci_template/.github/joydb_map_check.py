@@ -1,0 +1,1 @@
+../../test/lib/joydb_map_check.py
