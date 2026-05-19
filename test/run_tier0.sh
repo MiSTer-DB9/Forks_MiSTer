@@ -109,16 +109,15 @@ run_audit() {
     note "FAIL $name (rc=$rc)"; tail -15 "$WORK/$name.log" | sed 's/^/    /'; fail=1
   fi
 }
-# Per-core <core>.sv syntax lint on the freshly re-ported golden. SMS_MiSTer
-# parses fully clean under verilator/iverilog, so a porter-regex regression
-# that emits broken Verilog (the 43db15c / 995e9cc class) fails Tier-0 here
-# instead of 15 min into the Quartus build. Exit 2 = no linter -> SKIP (not a
-# failure: keeps Tier-0 runnable on a bare maintainer box).
+# Per-core <core>.sv delimiter-balance lint on the freshly re-ported golden.
+# A porter-regex regression that corrupts a delimiter (the 43db15c / 995e9cc
+# class) fails Tier-0 here instead of 15 min into the Quartus build. Pure
+# Python (no verilator/iverilog); exit 2 = <core>.sv unresolvable -> skip.
 csl_rc=0
 csl_out="$(bash "$HERE/lib/coresv_lint.sh" "$DST" "$CORE_SV" 2>&1)" || csl_rc=$?
 case "$csl_rc" in
   0) note "ok   coresv_lint  ${csl_out##*  }" ;;
-  2) note "skip coresv_lint  (${csl_out##*: }; no linter / unresolved)" ;;
+  2) note "skip coresv_lint  (${csl_out##*: }; <core>.sv unresolvable)" ;;
   *) note "FAIL coresv_lint"; printf '%s\n' "$csl_out" | sed 's/^/    /'; fail=1 ;;
 esac
 run_audit hps_io_width      "$HERE/lib/audit_hps_io_width.sh"

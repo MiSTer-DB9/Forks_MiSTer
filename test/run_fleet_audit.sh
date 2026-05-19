@@ -96,9 +96,9 @@ for c in "${cores[@]}"; do
     cf="$(python3 "$CONFSTRCHK" "$ROOT/$c" "$csv" 2>&1)"; cfrc=$?
     out+="$cf"$'\n'
     [ "$cfrc" -eq 1 ] && cfail+="confstr "
-    # Per-core <core>.sv syntax lint (porter-regex / merge breakage, the
-    # 43db15c / 995e9cc class). verilator (true oracle) -> iverilog -> SKIP
-    # if neither (exit 2, not a failure).
+    # Per-core <core>.sv delimiter-balance lint (porter-regex / merge
+    # corruption, the 43db15c / 995e9cc class). Pure Python, zero-FP;
+    # exit 2 = <core>.sv unresolvable (not a failure).
     cl="$(bash "$CORESVLINT" "$ROOT/$c" "$csv" 2>&1)"; clrc=$?
     out+="$cl"$'\n'
     [ "$clrc" -eq 1 ] && cfail+="coresv "

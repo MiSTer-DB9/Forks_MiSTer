@@ -72,10 +72,11 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  writes a status slice the joy_type/joy_2p decode never
 #                  reads -- NES 7fc497b dead-controller class; n/a for
 #                  bespoke/ext_ctrl cores, parse=2 fail-open).
-#   coresv         coresv_lint.sh FAIL (Verilog syntax error in <core>.sv --
-#                  porter-regex / merge breakage; verilator oracle, iverilog
-#                  fallback, SKIP=2 fail-open if neither present). See its
-#                  header for the regression-delta rationale.
+#   coresv         coresv_lint.sh FAIL (delimiter imbalance in <core>.sv --
+#                  the porter-regex / merge corruption class, e.g. 43db15c
+#                  `[4) : 0]}`. Comment/string-masked (), [], {} balance;
+#                  pure Python, zero false positive by construction. 2 =
+#                  <core>.sv unresolvable (fail-open).
 #   qipreg         qip_registration_check.py FATAL (a canonical fork
 #                  sys/*.{v,sv} present but unregistered in sys.qip/sys.tcl,
 #                  or a dangling registration -- Quartus silently skips the

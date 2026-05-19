@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-core <core>.sv HDL syntax lint (porter / merge regression).
+# Per-core <core>.sv structural lint (porter / merge regression).
 #
 # tier1 lints the canonical Forks_MiSTer/fork_ci_template/sys sources, but the
 # porter (port_core_full.py) and an upstream merge both rewrite the per-core
@@ -7,40 +7,37 @@
 # straight to the ~15-min Quartus build before failing — e.g. an OSD_STATUS
 # guard wrap that produced `joydb_1[4) : 0]}` (commit 43db15c), or a greedy
 # regex that stripped a SNAC fall-through arm (995e9cc). This is the cheap
-# pre-Quartus syntax guard for that class.
+# pre-Quartus guard for that class.
 #
-# Parse-only, no full rtl tree: elaboration WILL report unresolved leaf
-# modules — expected, NOT a failure. We gate ONLY on the substring
-# "syntax error", which both linters use verbatim for a malformed token
-# stream (broken bracket, dangling ternary, unbalanced brace) and which the
-# missing-module / unable-to-bind / cannot-find-module elaboration noise never
-# contains.
+# MECHANISM: a comment/string-masked DELIMITER-BALANCE check of the top
+# <core>.sv — every (), [], {} must nest and close. That is exactly what a
+# porter-regex / merge corruption breaks (`[4) : 0]}` mismatches a bracket;
+# a severed arm drops a brace), and a delimiter imbalance cannot occur in
+# Verilog Quartus accepts (the core would not synthesise). It is therefore
+# ZERO false-positive by construction.
 #
-# Linter selection (in order):
-#   1. verilator --lint-only -sv  — PREFERRED. Its SystemVerilog grammar is
-#      Quartus-complete, so a clean core parses clean (no false positive on
-#      the `'{ ... }` assignment-pattern array literal Genesis/AtariST/ao486
-#      use). With verilator this is a TRUE pass/fail oracle.
-#   2. iverilog -tnull -g2012/-g2005 — FALLBACK. iverilog's SV grammar is
-#      INCOMPLETE vs Quartus and rejects valid `'{...}` literals, so on the
-#      iverilog path a clean core can report "syntax error" even though it
-#      builds. There it degrades to a REGRESSION-DELTA gate (merge_validate's
-#      baseline/check cancels any token present pre-merge, so only a NEWLY
-#      introduced syntax error wedges — exactly how step6/snac/mt32 behave).
-#   3. neither tool present — SKIP, exit 2 (fail-open). merge_validate.sh runs
-#      in the per-fork sync container, whose contract is "no Quartus, no
-#      iverilog, no network"; this check must not add a HARD dependency there.
-#      Where a linter IS guaranteed (Tier-0 maintainer tree, regression_tests
-#      CI with verilator installed) it is a real gate; the sync path keeps it
-#      best-effort, consistent with merge_validate's existing fail-open tier.
+# Why not a parser (verilator/iverilog): tried, rejected. Across the full
+# fleet, FOSS parsers reject many Quartus-VALID idioms — a trailing comma in
+# a concatenation `{a,b,}` (SAM-Coupe, QBert), a string literal as a concat
+# operand `{32'd0,x,"RT"}` (GBA), and (when leaf RTL is reachable) V2001
+# `.do(...)` named ports (`do` is an SV keyword: SNES/Amstrad/SGB). None of
+# those are bitstream defects; all produced pure false positives that wedged
+# the absolute fleet audit. verilator is not a Quartus oracle. Balance is.
+#
+# A masked balance check (only `"`-strings / `//` / `/* */` are blanked,
+# length-preserving — Verilog `'` is a base literal/cast, never a string)
+# is immune to every one of those idioms (they are all delimiter-balanced)
+# yet still catches the 43db15c/995e9cc corruption class. Pure Python, no
+# verilator / iverilog / network — so it is a REAL gate everywhere,
+# including the per-fork sync container (no longer best-effort/SKIP there).
 #
 #   coresv_lint.sh <core_dir> [<core_sv_basename>]
 #
-# Emits one machine line `  coresv-lint: PASS|FAIL|SKIP` (matches the
+# Emits one machine line `  coresv-lint: PASS|FAIL` (matches the
 # `portmap-coresv:` / `snac-coresv:` convention the runners already parse).
-# Exit: 0 = PASS (or n/a), 1 = FAIL (syntax error), 2 = could not resolve
-#       <core>.sv OR no linter available (callers are fail-open on 2, exactly
-#       like the python checks' parse-error tier).
+# Exit: 0 = PASS, 1 = FAIL (delimiter imbalance), 2 = could not resolve
+#       <core>.sv (callers are fail-open on 2, exactly like the python
+#       checks' parse-error tier).
 
 set -uo pipefail
 
@@ -72,48 +69,88 @@ if [ -z "$csv" ] || [ ! -f "$CORE_DIR/$csv" ]; then
   exit 2
 fi
 
-# build_id.v is generated at build time by sys/build_id.tcl (Quartus) and is
-# gitignored, so it is absent in a checked-out tree. `\`include "build_id.v"`
-# then fails and cascades into a SPURIOUS "syntax error" on the next line on
-# every clean core. Stub it in a private incdir (only used when the core has
-# no real build_id.v at its own source dir, which takes precedence).
-STUB="$(mktemp -d "${TMPDIR:-/tmp}/coresv_lint.XXXXXX")"
-LOG="$STUB/lint.log"
-trap 'rm -rf "$STUB"' EXIT
-printf '`define BUILD_DATE "000000"\n' > "$STUB/build_id.v"
+python3 - "$CORE_DIR/$csv" "$csv" <<'PY'
+import re, sys
 
-# Core's own include / library dirs so as much as possible elaborates (more
-# resolved => more parse coverage); a missing dir is harmless.
-INCDIRS=("$STUB")
-for d in sys rtl; do [ -d "$CORE_DIR/$d" ] && INCDIRS+=("$CORE_DIR/$d"); done
+path, label = sys.argv[1], sys.argv[2]
+# latin1 round-trips every byte (no UTF-8 decode error, no line-ending
+# mutation) — we only ever inspect ASCII delimiters.
+src = open(path, "rb").read().decode("latin1")
 
-if command -v verilator >/dev/null 2>&1; then
-  TOOL=verilator
-  # +incdir+a+b+c ; -y libdir per dir. --top-module emu: emu_portmap_check
-  # resolved the .sv that declares `module emu` (handles bespoke cores too).
-  vargs=(--lint-only -sv -Wno-fatal --top-module emu)
-  inc="+incdir"; for d in "${INCDIRS[@]}"; do inc+="+$d"; done
-  vargs+=("$inc")
-  for d in "${INCDIRS[@]}"; do vargs+=(-y "$d"); done
-  verilator "${vargs[@]}" "$CORE_DIR/$csv" >"$LOG" 2>&1 || true
-elif command -v iverilog >/dev/null 2>&1; then
-  TOOL=iverilog
-  # Dialect MUST match the extension (the fork docs): .v -> 2005, .sv -> 2012.
-  case "$csv" in *.sv) GVER=-g2012 ;; *) GVER=-g2005 ;; esac
-  ivopts=()
-  for d in "${INCDIRS[@]}"; do ivopts+=(-I "$d"); done
-  for d in sys rtl; do [ -d "$CORE_DIR/$d" ] && ivopts+=(-y "$CORE_DIR/$d"); done
-  iverilog -tnull "$GVER" "${ivopts[@]}" "$CORE_DIR/$csv" >"$LOG" 2>&1 || true
-else
-  echo "  coresv-lint: SKIP  no verilator/iverilog (fail-open) [$csv]"
-  exit 2
-fi
+def mask(s):
+    # length-preserving blanking of // , /* */ and "..." so a delimiter
+    # inside a comment or string is never counted. ONLY double quotes are
+    # strings — Verilog `'` is a base literal (`1'b0`, `'h1F`) or assignment
+    # pattern (`'{...}`), never a string, so it must NOT open a masked span.
+    out, i, n = [], 0, len(s)
+    while i < n:
+        t = s[i:i + 2]
+        if t == "//":
+            j = s.find("\n", i); j = n if j < 0 else j
+            out.append(" " * (j - i)); i = j
+        elif t == "/*":
+            j = s.find("*/", i + 2); j = n if j < 0 else j + 2
+            out.append(" " * (j - i)); i = j
+        elif s[i] == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+            j = min(j + 1, n); out.append(" " * (j - i)); i = j
+        else:
+            out.append(s[i]); i += 1
+    return "".join(out)
 
-if grep -q 'syntax error' "$LOG"; then
-  echo "  coresv-lint: FAIL ($csv, $TOOL) — Verilog syntax error:"
-  grep -nE 'syntax error' "$LOG" | sed 's/^/    /' | head -20
-  exit 1
-fi
+m = mask(src)
+PAIR = {")": "(", "]": "[", "}": "{"}
+OPEN = set("([{")
+stack = []          # (char, line)
+line = 1
+fail = None
+for ch in m:
+    if ch == "\n":
+        line += 1
+        continue
+    if fail:
+        continue
+    if ch in OPEN:
+        stack.append((ch, line))
+    elif ch in PAIR:
+        if not stack:
+            fail = (line, f"unmatched closing '{ch}' "
+                          f"(no open delimiter)")
+        elif stack[-1][0] != PAIR[ch]:
+            o, ol = stack[-1]
+            fail = (line, f"'{ch}' closes a '{o}' opened at line {ol} "
+                          f"(mismatched delimiter — porter/merge "
+                          f"corruption, e.g. the 43db15c `[4) : 0]}}` class)")
+        else:
+            stack.pop()
+if not fail and stack:
+    o, ol = stack[-1]
+    fail = (ol, f"'{o}' opened here is never closed "
+                f"(severed block — the 995e9cc class)")
 
-echo "  coresv-lint: PASS  ($csv, $TOOL)"
-exit 0
+def region_of(ln):
+    # nearest preceding fork marker, for a localised message.
+    best = None
+    for mt in re.finditer(r"\[MiSTer-DB9(?:-Pro)? (?:BEGIN|END)\][^\n]*",
+                          src):
+        if src.count("\n", 0, mt.start()) + 1 <= ln:
+            best = mt.group(0)
+    return best
+
+if fail:
+    ln, why = fail
+    print(f"  coresv-lint: FAIL ({label}) — line {ln}: {why}")
+    reg = region_of(ln)
+    if reg:
+        print(f"    nearest fork marker above: {reg}")
+    ctx = src.splitlines()[max(0, ln - 1)] if ln <= len(
+        src.splitlines()) else ""
+    if ctx.strip():
+        print(f"    {ln}: {ctx.strip()[:100]}")
+    sys.exit(1)
+
+print(f"  coresv-lint: PASS  ({label}, delimiter-balance)")
+sys.exit(0)
+PY
