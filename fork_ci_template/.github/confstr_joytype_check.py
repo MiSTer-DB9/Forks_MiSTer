@@ -1,0 +1,1 @@
+../../test/lib/confstr_joytype_check.py

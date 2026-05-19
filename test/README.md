@@ -183,10 +183,13 @@ Forks_MiSTer/test/run_tier0.sh                  # default golden: SMS_MiSTer
 TIER0_CORE=NES_MiSTer TIER0_CORE_SV=NES.sv Forks_MiSTer/test/run_tier0.sh
 ```
 
-Requires the full `~/dev/sources/mister/MiSTer-DB9/` working tree (sibling
-core repos + top-level test/lib), so it is a **maintainer pre-sync
-gate**, not Forks_MiSTer-repo CI. The `hps_io_width`, `status_collisions`,
-and `gate_e2e` cross-fork audits all run as gating checks.
+Requires the full `~/dev/sources/mister/MiSTer-DB9/` working tree for the
+sibling core repos (fleet audit + `apply_db9_framework.sh` idempotency), so
+it is a **maintainer pre-sync gate**, not Forks_MiSTer-repo CI. The
+`coresv_lint`, `hps_io_width`, `status_collisions`, and `gate_e2e` checks all
+run as gating checks; all their scripts now live committed under
+`test/`/`test/lib/` (no dependency on the unmanaged umbrella
+test/lib).
 
 ## Tier 1 — canonical HDL sim (`run_tier1.sh`)
 

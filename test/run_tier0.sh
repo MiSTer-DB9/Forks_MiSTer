@@ -91,9 +91,21 @@ run_audit() {
     note "FAIL $name (rc=$rc)"; tail -15 "$WORK/$name.log" | sed 's/^/    /'; fail=1
   fi
 }
-run_audit hps_io_width      "$FORKS/../the relocated test/lib helper"
-run_audit status_collisions "$FORKS/../the relocated test/lib helper"
-run_audit gate_e2e          "$FORKS/../the relocated test/lib helper"
+# Per-core <core>.sv syntax lint on the freshly re-ported golden. SMS_MiSTer
+# parses fully clean under verilator/iverilog, so a porter-regex regression
+# that emits broken Verilog (the 43db15c / 995e9cc class) fails Tier-0 here
+# instead of 15 min into the Quartus build. Exit 2 = no linter -> SKIP (not a
+# failure: keeps Tier-0 runnable on a bare maintainer box).
+csl_rc=0
+csl_out="$(bash "$HERE/lib/coresv_lint.sh" "$DST" "$CORE_SV" 2>&1)" || csl_rc=$?
+case "$csl_rc" in
+  0) note "ok   coresv_lint  ${csl_out##*  }" ;;
+  2) note "skip coresv_lint  (${csl_out##*: }; no linter / unresolved)" ;;
+  *) note "FAIL coresv_lint"; printf '%s\n' "$csl_out" | sed 's/^/    /'; fail=1 ;;
+esac
+run_audit hps_io_width      "$HERE/lib/audit_hps_io_width.sh"
+run_audit status_collisions "$HERE/lib/audit_status_collisions.sh"
+run_audit gate_e2e          "$HERE/test_gate_e2e.sh"
 
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER0: PASS"; exit 0; else echo "TIER0: FAIL"; exit 1; fi

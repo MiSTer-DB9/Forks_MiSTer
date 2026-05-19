@@ -30,6 +30,8 @@ PORTMAP="$HERE/lib/emu_portmap_check.py"
 JOYDBMAP="$HERE/lib/joydb_map_check.py"
 MT32CHK="$HERE/lib/mt32_gate_check.py"
 SNACCHK="$HERE/lib/snac_active_check.py"
+CONFSTRCHK="$HERE/lib/confstr_joytype_check.py"
+CORESVLINT="$HERE/lib/coresv_lint.sh"
 # Advisory only, NEVER gates: joydb->joystick *semantic* role check
 # (Start=joydb[10], Select/Mode/Coin=joydb[11], arcade fire from joydb[4]).
 JOYDBSEM="$HERE/lib/joydb_semantic_check.py"
@@ -87,6 +89,18 @@ for c in "${cores[@]}"; do
     sn="$(python3 "$SNACCHK" "$ROOT/$c" "$csv" 2>&1)"; src=$?
     out+="$sn"$'\n'
     [ "$src" -eq 1 ] && cfail+="snac "
+    # CONF_STR <-> joy_type/joy_2p status-bit alignment (NES 7fc497b class:
+    # menu writes a slice the decode never reads). FATAL=mismatch; n/a for
+    # bespoke / ext_ctrl-mirror cores. Reuses the resolved <core>.sv.
+    cf="$(python3 "$CONFSTRCHK" "$ROOT/$c" "$csv" 2>&1)"; cfrc=$?
+    out+="$cf"$'\n'
+    [ "$cfrc" -eq 1 ] && cfail+="confstr "
+    # Per-core <core>.sv syntax lint (porter-regex / merge breakage, the
+    # 43db15c / 995e9cc class). verilator (true oracle) -> iverilog -> SKIP
+    # if neither (exit 2, not a failure).
+    cl="$(bash "$CORESVLINT" "$ROOT/$c" "$csv" 2>&1)"; clrc=$?
+    out+="$cl"$'\n'
+    [ "$clrc" -eq 1 ] && cfail+="coresv "
     # joydb semantic role check — SPLIT tiers:
     #   FATAL (exit 1) = P1/P2 role transpose (ComputerSpace class) ->
     #     GATES this audit, exactly like mapcheck/mt32gate/snac. Caught
@@ -128,7 +142,7 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|joydbsem:|drift:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:' \
       | sed 's/^/      /'
   fi
   # Advisory joydb-semantic WARNs are shown regardless of pass/fail and

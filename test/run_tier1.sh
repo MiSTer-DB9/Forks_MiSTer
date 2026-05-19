@@ -87,5 +87,24 @@ else
   note "snac_active_check selftest FAIL"; sed 's/^/    /' "$WORK/sn.log"; fail=1
 fi
 
+echo "== Tier 1: key-gate end-to-end (db9_sign.py <-> siphash24.v) =="
+# Hermetic: signer trio in test/lib, canonical gate HDL in
+# fork_ci_template/sys. Catches the 27e624f class (db9_key_gate shift-reg /
+# feature_mask regression) + Python<->Verilog SipHash byte-order drift.
+if bash "$HERE/test_gate_e2e.sh" >"$WORK/ge.log" 2>&1 \
+   && grep -q "v1.5 key gate end-to-end PASS" "$WORK/ge.log"; then
+  note "test_gate_e2e PASS"
+else
+  note "test_gate_e2e FAIL"; sed 's/^/    /' "$WORK/ge.log" | tail -25; fail=1
+fi
+
+echo "== Tier 1: confstr_joytype_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_confstr_joytype_check.py" >"$WORK/cf.log" 2>&1 \
+   && grep -q "CONFSTR selftest: PASS" "$WORK/cf.log"; then
+  note "confstr_joytype_check selftest PASS"
+else
+  note "confstr_joytype_check selftest FAIL"; sed 's/^/    /' "$WORK/cf.log"; fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER1: PASS"; exit 0; else echo "TIER1: FAIL"; exit 1; fi

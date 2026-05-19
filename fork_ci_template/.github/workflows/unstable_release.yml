@@ -65,6 +65,15 @@ jobs:
         echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
         echo "Matrix: ${matrix}"
 
+    # coresv_lint (in merge_validate.sh, run from unstable_merge.sh below)
+    # prefers verilator as a true SV syntax oracle on the post-merge
+    # <core>.sv. Gated by the SAME condition as the merge step so the cron
+    # ticks that skip (no upstream change — the common case) don't pay the
+    # apt install. ~seconds when it does run; merge_validate is CI-only.
+    - name: Install verilator (coresv_lint gate)
+      if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
+      run: sudo apt-get update && sudo apt-get install -y verilator
+
     - name: Merge upstream HEAD (once, pre fan-out)
       if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
       id: merge

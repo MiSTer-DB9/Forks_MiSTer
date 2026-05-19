@@ -39,6 +39,8 @@ JOYDBMAP="${SCRIPT_DIR}/joydb_map_check.py"
 MT32CHK="${SCRIPT_DIR}/mt32_gate_check.py"
 SNACCHK="${SCRIPT_DIR}/snac_active_check.py"
 JOYDBSEM="${SCRIPT_DIR}/joydb_semantic_check.py"
+CONFSTRCHK="${SCRIPT_DIR}/confstr_joytype_check.py"
+CORESVLINT="${SCRIPT_DIR}/coresv_lint.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -65,6 +67,14 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  mt32_disable, or an ungoverned USER_OUT MT32 fallback).
 #   snac           snac_active_check.py FATAL (a SNAC core's snac_active was
 #                  reset to the inert 1'b0 default by an upstream merge).
+#   confstr        confstr_joytype_check.py FATAL (CONF_STR UserIO option
+#                  writes a status slice the joy_type/joy_2p decode never
+#                  reads -- NES 7fc497b dead-controller class; n/a for
+#                  bespoke/ext_ctrl cores, parse=2 fail-open).
+#   coresv         coresv_lint.sh FAIL (Verilog syntax error in <core>.sv --
+#                  porter-regex / merge breakage; verilator oracle, iverilog
+#                  fallback, SKIP=2 fail-open if neither present). See its
+#                  header for the regression-delta rationale.
 #   joydbsem       joydb_semantic_check.py FATAL (P1/P2 role transpose:
 #                  same joydb bit-set, swapped concat order, a role bit at
 #                  a mismatched position, single shared role in CONF_STR --
@@ -76,7 +86,7 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
-  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 toks=() id
+  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -100,6 +110,10 @@ compute_tokens() {
     [ "$src" -eq 1 ] && toks+=("snac")       # 1=FATAL; 2=parse (fail-open)
     python3 "$JOYDBSEM" "$dir" "$csv" >/dev/null 2>&1 || jsrc=$?
     [ "$jsrc" -eq 1 ] && toks+=("joydbsem")  # 1=FATAL; 2=parse (fail-open)
+    python3 "$CONFSTRCHK" "$dir" "$csv" >/dev/null 2>&1 || cfrc=$?
+    [ "$cfrc" -eq 1 ] && toks+=("confstr")   # 1=FATAL; 2=parse (fail-open)
+    bash "$CORESVLINT" "$dir" "$csv" >/dev/null 2>&1 || crc=$?
+    [ "$crc" -eq 1 ] && toks+=("coresv")     # 1=syntax err; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything

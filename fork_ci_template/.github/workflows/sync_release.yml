@@ -20,6 +20,14 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+    # merge_validate.sh's coresv_lint gate prefers verilator (Quartus-complete
+    # SV grammar -> true syntax oracle on the post-merge <core>.sv; iverilog's
+    # incomplete SV would only give a regression-delta). ~seconds to install,
+    # ~1-2s to lint one core. merge_validate runs ONLY here in CI, so this is
+    # the right place to provide the linter (vs the fail-open SKIP fallback).
+    - name: Install verilator (coresv_lint gate)
+      run: sudo apt-get update && sudo apt-get install -y verilator
+
     - name: Sync with upstream
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:
