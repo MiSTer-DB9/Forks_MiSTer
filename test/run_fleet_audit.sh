@@ -28,8 +28,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"          # umbrella MiSTer-DB9/
 PORTMAP="$HERE/lib/emu_portmap_check.py"
 JOYDBMAP="$HERE/lib/joydb_map_check.py"
+MT32CHK="$HERE/lib/mt32_gate_check.py"
+SNACCHK="$HERE/lib/snac_active_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
+# shellcheck source=lib/canonical_drift_check.sh
+source "$HERE/lib/canonical_drift_check.sh"
 
 only=""; changed=0; quiet=0
 while [ $# -gt 0 ]; do
@@ -69,12 +73,26 @@ for c in "${cores[@]}"; do
     jm="$(python3 "$JOYDBMAP" "$ROOT/$c" "$csv" 2>&1)"; jrc=$?
     out+="$jm"$'\n'
     [ "$jrc" -ne 0 ] && cfail+="mapcheck "
+    # MT32 anti-contention double-gate (the fork hazard notes).
+    # FATAL=missing Gate 1/2; FINDING=non-standard wiring; n/a=non-MT32.
+    mg="$(python3 "$MT32CHK" "$ROOT/$c" "$csv" 2>&1)"; mrc=$?
+    out+="$mg"$'\n'
+    [ "$mrc" -eq 1 ] && cfail+="mt32gate "
+    # SNAC priority over UserJoy (the fork hazard notes). FATAL=SNAC
+    # core reset to inert 1'b0; FINDING=untabled non-default.
+    sn="$(python3 "$SNACCHK" "$ROOT/$c" "$csv" 2>&1)"; src=$?
+    out+="$sn"$'\n'
+    [ "$src" -eq 1 ] && cfail+="snac "
   else
     cfail+="no-core-sv "
   fi
+  # Canonical sys/* drift (the merge-compat rule): per-core copies must equal
+  # Forks_MiSTer/fork_ci_template/sys. Independent of <core>.sv resolution.
+  dr="$(canonical_drift_check "$ROOT/$c" 2>&1)" || cfail+="drift "
+  out+="$dr"$'\n'
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
-    if finds="$(printf '%s\n' "$out" | grep 'joydbmap: FINDING')"; then
+    if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
       findn=$((findn+1)); findlist+=("$c")
       [ "$quiet" = 1 ] || echo "PASS  $c  (finding)"
       printf '%s\n' "$finds" | sed 's/^/      /'
@@ -83,7 +101,8 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|portmap:|joydbmap:' | sed 's/^/      /'
+    echo "$out" | grep -E 'FAIL|portmap:|joydbmap:|mt32gate:|snac:|drift:' \
+      | sed 's/^/      /'
   fi
 done
 

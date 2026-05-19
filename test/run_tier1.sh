@@ -71,5 +71,21 @@ else
   note "joydb_map_check selftest FAIL"; sed 's/^/    /' "$WORK/jm.log"; fail=1
 fi
 
+echo "== Tier 1: mt32_gate_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_mt32_gate_check.py" >"$WORK/mg.log" 2>&1 \
+   && grep -q "MT32GATE selftest: PASS" "$WORK/mg.log"; then
+  note "mt32_gate_check selftest PASS"
+else
+  note "mt32_gate_check selftest FAIL"; sed 's/^/    /' "$WORK/mg.log"; fail=1
+fi
+
+echo "== Tier 1: snac_active_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_snac_active_check.py" >"$WORK/sn.log" 2>&1 \
+   && grep -q "SNAC selftest: PASS" "$WORK/sn.log"; then
+  note "snac_active_check selftest PASS"
+else
+  note "snac_active_check selftest FAIL"; sed 's/^/    /' "$WORK/sn.log"; fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER1: PASS"; exit 0; else echo "TIER1: FAIL"; exit 1; fi

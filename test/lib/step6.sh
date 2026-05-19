@@ -144,6 +144,40 @@ step6_verify() {
   else
     _bad "10 sys/hps_io.{sv,v} not found"; fi
 
+  # 11. Saturn-first CONF_STR ordering (the fork hazard notes). When
+  #     "UserIO Joystick" lists DB9MD before Saturn, the first OSD click
+  #     lands on DB9MD, which drives the MD select line and reads the Saturn
+  #     pad as random buttons -> ghost inputs the user cannot click past to
+  #     reach Saturn mode. Only Saturn-capable cores are in scope; bespoke
+  #     cores gate Saturn in Main_MiSTer (no FPGA CONF_STR contract). The
+  #     check FAILs ONLY on a positively-seen DB9MD-before-Saturn ordering
+  #     (zero false positives: bit-relocated / absent lines stay n/a).
+  # (Item 11 is the last check, so early `return $rc` on each n/a guard is
+  #  safe and keeps the positive path unnested.)
+  if [ ! -f "$dir/sys/joydb9saturn.v" ]; then
+    _na "11 Saturn CONF_STR order n/a (no Saturn support)"; return $rc
+  fi
+  if [ "$bespoke" = 1 ]; then
+    _na "11 Saturn CONF_STR order n/a (bespoke: gated in Main_MiSTer)"
+    return $rc
+  fi
+  local cs
+  cs=$(grep -oE '"[^"]*UserIO Joystick[^"]*"' "$f" \
+       | grep -i 'Saturn' | grep -i 'DB9MD' | head -1)
+  if [ -z "$cs" ]; then
+    _na "11 Saturn CONF_STR order n/a (no UserIO Joystick line w/ both)"
+    return $rc
+  fi
+  local si di
+  si=$(awk -v s="$cs" 'BEGIN{print index(tolower(s),"saturn")}')
+  di=$(awk -v s="$cs" 'BEGIN{print index(tolower(s),"db9md")}')
+  if [ "$si" -gt 0 ] && [ "$di" -gt 0 ] && [ "$si" -lt "$di" ]; then
+    _ok "11 Saturn first in CONF_STR (Saturn before DB9MD)"
+  else
+    _bad "11 Saturn CONF_STR order: DB9MD before Saturn (OSD-cycle \
+ghost-input hazard)"
+  fi
+
   return $rc
 }
 

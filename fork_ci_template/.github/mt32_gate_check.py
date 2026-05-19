@@ -1,0 +1,1 @@
+../../test/lib/mt32_gate_check.py

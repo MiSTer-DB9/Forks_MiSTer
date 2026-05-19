@@ -49,6 +49,47 @@ Per core it runs:
    `lib/test_joydb_map_check.py` (fixtures in `fixtures/joydb_map/`, run from
    Tier 1). Also gated regression-only by `merge_validate.sh` (a merge that
    introduces a new FATAL fails the unstable/stable canary ~12 h early).
+4. **`lib/mt32_gate_check.py`** — MT32-pi USER_IO anti-contention
+   **double-gate** (`the fork hazard notes`). Scoped to MT32-capable
+   cores (token-detected: `mt32pi`/`USER_*_MT32`/`mt32_use`). **FATAL**:
+   `USER_IN_MT32` whose RHS does not AND-include `mt32_disable` (Gate 1 —
+   MT32 reads raw DB9 at boot), or a `USER_OUT ← USER_OUT_MT32`/`mt32_out`
+   fallback not governed by `mt32_use`/`mt32_disable`/`mt32_on_primary`
+   (Gate 2 — MT32 drives I2C onto USER_IO in the boot window). Recognises the
+   always_comb (Minimig/AtariST/X68000), assign (ao486) and TRS-80
+   `mt32_disable`-direct variants. **FINDING** (non-gating): MT32-capable but
+   the expected gate anchor is absent (non-standard wiring, review).
+   Self-tested by `lib/test_mt32_gate_check.py` (`fixtures/mt32_gate/`).
+5. **`lib/snac_active_check.py`** — SNAC priority over UserJoy
+   (`the fork hazard notes`). Table-keyed on core dir name. **FATAL**: a
+   tabled SNAC core whose `wire snac_active` RHS is the inert `1'b0` default
+   *or* that has no `snac_active` line at all (joy_type ungated → SNAC will
+   not preempt the joydb wrapper → ghost OSD clicks). **FINDING**
+   (non-gating): a non-tabled core with a non-default RHS (possibly
+   newly-SNAC, not yet tabled — review). **n/a**: a non-tabled core with the
+   line absent or inert — the common case (~133/145 cores gate joy_type
+   directly off `status[127:126]`, no snac wrapper gate; absence there is
+   normal, not a parse error). Gate is "RHS ≠ inert default" (exact-expr
+   equality is fragile; the regression we must catch is a wired core reset
+   to `1'b0`). Self-tested by `lib/test_snac_active_check.py`
+   (`fixtures/snac_active/`).
+6. **`lib/canonical_drift_check.sh`** — every per-core
+   `sys/{joydb.sv,joydb15.v,joydb9md.v,joydb9saturn.v,db9_key_gate.sv,
+   siphash24.v}` must be byte-identical to `fork_ci_template/sys/` canonical
+   (`the merge-compat rule`: per-core copies are regenerated, never hand-edited).
+   **FATAL** on any drift; `db9_key_secret.vh` mismatch is a non-gating
+   **FINDING** (CI-materialised from a secret). Tier 0 only byte-checks the
+   single golden core — this closes the gap fleet-wide. Umbrella-only
+   (needs the canonical reference); **deliberately not in `merge_validate.sh`**
+   (a fork repo carries no canonical to diff against).
+
+Checks 4–5 reuse the `<core>.sv` `emu_portmap_check.py` already resolved
+(no extra tree walk). `step6.sh` also gained **item 11** — Saturn-first
+CONF_STR ordering (`the fork hazard notes`): a Saturn core whose
+`UserIO Joystick` CONF_STR lists DB9MD before Saturn FAILs (OSD-cycle
+ghost-input hazard); blocking in `merge_validate.sh`. Checks 4, 5 and
+Step-6 #11 are also wired into `merge_validate.sh` as regression-only delta
+gates (an upstream merge that introduces a new FATAL fails the canary).
 
 DB15-only scope is sufficient: DB9MD/DB15/Saturn all ride the same `joydb.sv`
 wrapper and the same `emu`/`sys_top` nets, so a wiring break breaks all three;
@@ -79,6 +120,20 @@ bugs**, all fixed in the same change: 3 P1/P2 leaks (`C16`, `VIC20`,
 (`Arcade-Finalizer/IremM72/IronHorse/Jailbreak/ScooterShooter/TimePilot84`,
 `GnW`, `Arduboy` — `[15:0]`/non-`[31:0]` mux arms the porter's `[31:0]`-only
 `wrap_joystick_mux` never guarded).
+
+**mt32_gate / snac_active / drift baseline (2026-05): 145/145 PASS, 0 false
+positives** (with git-clean working trees). MT32 double-gate verified on all
+5 MT32 cores (Minimig, AtariST, X68000, ao486 assign-style, TRS-80 variant);
+every tabled SNAC core matches its `the SNAC-priority rule` expression. During
+bring-up the drift check fired a **true positive**: `Saturn_MiSTer` and
+`MegaDrive_MiSTer` momentarily had *uncommitted local edits* to their
+canonical-managed `sys/` helpers (an adaptive-poll latency block + Stunner
+detection + a `.joy_2p` port + 16-bit `JCLOCKS`) diverging from
+`fork_ci_template/sys/` — exactly the "never hand-edit a per-core copy; the
+next BOT sync overwrites it" hazard from `the merge-compat rule`. Once those trees
+were reset to the BOT-synced canonical state the check returned to PASS the
+same run — a clean true-positive that arms and clears on the actual
+condition, no standing finding.
 
 ---
 
@@ -125,6 +180,12 @@ then two self-checking testbenches:
   `fixtures/joydb_map/` (good / leak / out-of-range / missing-OSD /
   divergence + the order-swap-not-misreported regression guard). Pure
   Python, no iverilog.
+- `lib/test_mt32_gate_check.py` — `mt32_gate_check.py` against
+  `fixtures/mt32_gate/` (good always_comb / good TRS-80 / Gate-1 defect /
+  Gate-2 defect / non-MT32 n/a + no-false-FAIL guard).
+- `lib/test_snac_active_check.py` — `snac_active_check.py` against
+  `fixtures/snac_active/` (tabled-ok / tabled-reset-to-default FATAL /
+  non-tabled-default n/a / non-tabled-nondefault FINDING).
 
 Both seed the inner `joydb15.v` `JCLOCKS` counter (no RTL initializer; FPGA
 powers it to 0, sim leaves it `X` and `X+1` stays `X`) — white-box, sim-only.
@@ -144,3 +205,7 @@ MCU emulates the DB15 splitter serial side; readout via evdev over SSH. See
   FAIL. Flip an expected vector in `tb_joydb15.v` → FAIL.
 - Tier 0: inject a stray `JOY_FLAG` line into the staged core → Step-6 check 2
   FAIL. Any porter output change → golden diff FAIL.
+- Fleet: drop `mt32_disable` from a core's `USER_IN_MT32` → `mt32gate` FATAL.
+  Reset a SNAC core's `wire snac_active` to `1'b0` → `snac` FATAL. Touch any
+  per-core `sys/joydb.sv` → `drift` FAIL. Reorder a Saturn CONF_STR to
+  DB9MD-first → Step-6 #11 FAIL.

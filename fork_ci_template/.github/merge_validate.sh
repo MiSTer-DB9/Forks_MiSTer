@@ -20,24 +20,34 @@
 # Exit: check → 0 (no regression / no baseline = fail-open), 1 (regression).
 #       baseline → always 0 (informational; never blocks the sync).
 #
-# emu_portmap_check.py + step6.sh are symlinks to the canonical
-# Forks_MiSTer/test/lib copies (single source of truth, also driving
-# run_fleet_audit.sh); setup_cicd.sh's `cp -rL` dereferences them into each
-# fork, exactly like retry.sh / rerere_train.sh.
+# emu_portmap_check.py / step6.sh / joydb_map_check.py / mt32_gate_check.py /
+# snac_active_check.py are symlinks to the canonical Forks_MiSTer/test/lib
+# copies (single source of truth, also driving run_fleet_audit.sh);
+# setup_cicd.sh's `cp -rL` dereferences them into each fork, exactly like
+# retry.sh / rerere_train.sh. canonical_drift_check is intentionally NOT
+# wired here: it compares a fork's sys/* against Forks_MiSTer's
+# fork_ci_template/sys canonical, which does not exist inside a fork repo
+# (the fork only carries the already-materialised copies). Drift is a
+# fleet/umbrella check (run_fleet_audit.sh + Tier-0), not a per-fork merge
+# gate.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORTMAP="${SCRIPT_DIR}/emu_portmap_check.py"
 JOYDBMAP="${SCRIPT_DIR}/joydb_map_check.py"
+MT32CHK="${SCRIPT_DIR}/mt32_gate_check.py"
+SNACCHK="${SCRIPT_DIR}/snac_active_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
 # Step-6 ids that are merge-functional and therefore block on regression.
 # Excluded on purpose: 1 (EOL) / 2 (legacy JOY_FLAG) / 8 (.qsf staged) — git
 # index-state noise at `git merge --no-commit`, not a wiring break; still
-# printed by step6_verify as info, just never gated here.
-BLOCKING_STEP6=" 3 4 4b 5 6 7 10 "
+# printed by step6_verify as info, just never gated here. 11 (Saturn-first
+# CONF_STR order) IS blocking — an upstream CONF_STR reorder is a real
+# OSD-cycle ghost-input hazard (the fork hazard notes).
+BLOCKING_STEP6=" 3 4 4b 5 6 7 10 11 "
 
 BASELINE_FILE="${RUNNER_TEMP:-/tmp}/db9_merge_validate_baseline.txt"
 
@@ -50,9 +60,16 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #   mapcheck       joydb_map_check.py FATAL (P1/P2 leak / out-of-range bit /
 #                  missing OSD_STATUS guard). Its non-gating FINDINGs (bit-set
 #                  divergence) never produce a token, so they cannot wedge.
+#   mt32gate       mt32_gate_check.py FATAL (USER_IN_MT32 missing
+#                  mt32_disable, or an ungoverned USER_OUT MT32 fallback).
+#   snac           snac_active_check.py FATAL (a SNAC core's snac_active was
+#                  reset to the inert 1'b0 default by an upstream merge).
+# All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
-  local pm rc=0 csv s6 jrc=0 toks=() id
+  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 toks=() id
+  # canonical_drift_check is deliberately absent here (no canonical sys/ in
+  # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] && toks+=("portmap")
   csv="$(printf '%s\n' "$pm" | extract_portmap_coresv)"
@@ -68,6 +85,10 @@ compute_tokens() {
     done < <(printf '%s\n' "$s6" | sed -n 's/^  step6: FAIL \([^ ]*\).*/\1/p')
     python3 "$JOYDBMAP" "$dir" "$csv" >/dev/null 2>&1 || jrc=$?
     [ "$jrc" -ne 0 ] && toks+=("mapcheck")
+    python3 "$MT32CHK" "$dir" "$csv" >/dev/null 2>&1 || mrc=$?
+    [ "$mrc" -eq 1 ] && toks+=("mt32gate")   # 1=FATAL; 2=parse (fail-open)
+    python3 "$SNACCHK" "$dir" "$csv" >/dev/null 2>&1 || src=$?
+    [ "$src" -eq 1 ] && toks+=("snac")       # 1=FATAL; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything
