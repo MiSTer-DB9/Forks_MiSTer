@@ -30,6 +30,9 @@ PORTMAP="$HERE/lib/emu_portmap_check.py"
 JOYDBMAP="$HERE/lib/joydb_map_check.py"
 MT32CHK="$HERE/lib/mt32_gate_check.py"
 SNACCHK="$HERE/lib/snac_active_check.py"
+# Advisory only, NEVER gates: joydb->joystick *semantic* role check
+# (Start=joydb[10], Select/Mode/Coin=joydb[11], arcade fire from joydb[4]).
+JOYDBSEM="$HERE/lib/joydb_semantic_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 # shellcheck source=lib/canonical_drift_check.sh
@@ -51,6 +54,7 @@ mapfile -t cores < <(cd "$ROOT" && for d in */sys/joydb.sv; do
 [ -n "$only" ] && cores=("$only")
 
 pass=0; failn=0; faillist=(); findn=0; findlist=()
+semwarn=0; semlist=()                       # advisory joydb-semantic WARNs
 for c in "${cores[@]}"; do
   cd "$ROOT"
   [ -d "$c" ] || { echo "skip (missing): $c"; continue; }
@@ -83,6 +87,29 @@ for c in "${cores[@]}"; do
     sn="$(python3 "$SNACCHK" "$ROOT/$c" "$csv" 2>&1)"; src=$?
     out+="$sn"$'\n'
     [ "$src" -eq 1 ] && cfail+="snac "
+    # joydb semantic role check — SPLIT tiers:
+    #   FATAL (exit 1) = P1/P2 role transpose (ComputerSpace class) ->
+    #     GATES this audit, exactly like mapcheck/mt32gate/snac. Caught
+    #     here at the maintainer pre-sync gate, never in merge_validate.
+    #   WARN  (exit 0) = advisory Start/Select/fire heuristics -> surfaced
+    #     as a GitHub ::warning:: + a $GITHUB_STEP_SUMMARY digest, never
+    #     changes the exit code.
+    # Reuses the resolved <core>.sv.
+    if [ -f "$JOYDBSEM" ]; then
+      js="$(python3 "$JOYDBSEM" "$ROOT/$c" "$csv" 2>&1)"; jsrc=$?
+      out+="$js"$'\n'
+      [ "$jsrc" -eq 1 ] && cfail+="joydbsem "
+      while IFS= read -r wl; do
+        msg="${wl#*joydbsem: WARN }"
+        semwarn=$((semwarn+1))
+        case " ${semlist[*]-} " in *" $c "*) ;; *) semlist+=("$c");; esac
+        if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+          echo "::warning title=joydb-semantic ($c)::$msg"
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] && \
+            printf -- '- **%s**: %s\n' "$c" "$msg" >> "$GITHUB_STEP_SUMMARY"
+        fi
+      done < <(printf '%s\n' "$js" | grep -E 'joydbsem: WARN' || true)
+    fi
   else
     cfail+="no-core-sv "
   fi
@@ -101,9 +128,13 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|portmap:|joydbmap:|mt32gate:|snac:|drift:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|joydbsem:|drift:' \
       | sed 's/^/      /'
   fi
+  # Advisory joydb-semantic WARNs are shown regardless of pass/fail and
+  # never change the exit code.
+  printf '%s\n' "$out" | grep -E 'joydbsem: WARN' | sed 's/^/      SEM /' \
+    || true
 done
 
 echo
@@ -111,6 +142,9 @@ echo "==== fleet audit: ${pass} PASS / ${failn} FAIL / $((pass+failn)) cores" \
      "(${findn} with non-gating findings) ===="
 if [ "$findn" -ne 0 ]; then
   printf '  findings: %s\n' "${findlist[*]}"
+fi
+if [ "$semwarn" -ne 0 ]; then
+  printf '  joydb-semantic WARN (advisory, non-gating): %s\n' "${semlist[*]}"
 fi
 if [ "$failn" -ne 0 ]; then
   printf '  failing: %s\n' "${faillist[*]}"
