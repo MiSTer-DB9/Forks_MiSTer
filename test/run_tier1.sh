@@ -138,6 +138,14 @@ else
   note "saturn_gate_check selftest FAIL"; sed 's/^/    /' "$WORK/sg.log"; fail=1
 fi
 
+echo "== Tier 1: joydb_binding_check selftest (synth fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_joydb_binding_check.py" >"$WORK/jb.log" 2>&1 \
+   && grep -q "JOYDBBIND selftest: PASS" "$WORK/jb.log"; then
+  note "joydb_binding_check selftest PASS"
+else
+  note "joydb_binding_check selftest FAIL"; sed 's/^/    /' "$WORK/jb.log"; fail=1
+fi
+
 echo "== Tier 1: forks_ini_check selftest (fixtures, no iverilog) =="
 if python3 "$HERE/lib/test_forks_ini_check.py" >"$WORK/fi.log" 2>&1 \
    && grep -q "FORKSINI selftest: PASS" "$WORK/fi.log"; then

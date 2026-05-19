@@ -143,6 +143,15 @@ esac
 # delta-gated in merge_validate, so Tier-0 never fails on it).
 sg_out="$(python3 "$HERE/lib/saturn_gate_check.py" "$DST" "$CORE_SV" 2>&1)" || true
 note "info saturn_gate  $(printf '%s\n' "$sg_out" | sed -n 's/^  satgate: //p')"
+# joydb wrapper port-binding completeness vs canonical joydb.sv on the
+# freshly re-ported golden (SMS binds the porter-emitted full set -> PASS).
+jb_rc=0
+jb_out="$(python3 "$HERE/lib/joydb_binding_check.py" "$DST" "$CORE_SV" 2>&1)" || jb_rc=$?
+case "$jb_rc" in
+  0) note "ok   joydb_bind  ${jb_out##*  }" ;;
+  2) note "skip joydb_bind  (<core>.sv unresolvable)" ;;
+  *) note "FAIL joydb_bind"; printf '%s\n' "$jb_out" | sed 's/^/    /'; fail=1 ;;
+esac
 run_audit hps_io_width      "$HERE/lib/audit_hps_io_width.sh"
 run_audit status_collisions "$HERE/lib/audit_status_collisions.sh"
 run_audit gate_e2e          "$HERE/test_gate_e2e.sh"

@@ -42,6 +42,11 @@ JOYDBSEM="$HERE/lib/joydb_semantic_check.py"
 # tied test core (InputTest 1'b1) is WEAK absolutely -> only the
 # merge_validate baseline/check delta can gate it without a false positive.
 SATGATE="$HERE/lib/saturn_gate_check.py"
+# Gates (FATAL zero-FP by construction): joydb wrapper instance must bind
+# every port of the canonical fork_ci_template/sys/joydb.sv module. A
+# merge / hand-edit that drops or typo-renames a binding leaves the
+# controller path silently dead.
+JOYDBBIND="$HERE/lib/joydb_binding_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 # shellcheck source=lib/canonical_drift_check.sh
@@ -162,6 +167,12 @@ for c in "${cores[@]}"; do
   # touches cfail; surfaced below like the joydbsem WARN tier.
   sg="$(python3 "$SATGATE" "$ROOT/$c" "$csv" 2>&1)"
   out+="$sg"$'\n'
+  # joydb wrapper port-binding completeness vs canonical joydb.sv module.
+  # FATAL=1 gates (no legit "missing port" case -- the porter emits a full
+  # instance; bespoke cores have no wrapper -> n/a). parse(2) does not.
+  jb="$(python3 "$JOYDBBIND" "$ROOT/$c" "$csv" 2>&1)"; jbrc=$?
+  out+="$jb"$'\n'
+  [ "$jbrc" -eq 1 ] && cfail+="joydbbind "
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
     if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
@@ -173,7 +184,7 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:|marker-nest:|vprec:|satgate:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:|marker-nest:|vprec:|satgate:|joydb-bind:' \
       | sed 's/^/      /'
   fi
   # Advisory joydb-semantic WARNs + satgate WEAK are shown regardless of

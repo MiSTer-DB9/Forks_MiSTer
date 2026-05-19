@@ -45,6 +45,7 @@ QIPREG="${SCRIPT_DIR}/qip_registration_check.py"
 MARKERNEST="${SCRIPT_DIR}/marker_nesting_check.py"
 VPREC="${SCRIPT_DIR}/verilog_precedence_check.py"
 SATGATE="${SCRIPT_DIR}/saturn_gate_check.py"
+JOYDBBIND="${SCRIPT_DIR}/joydb_binding_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -109,11 +110,19 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  a legitimately-tied test core (InputTest 1'b1) is WEAK
 #                  in BOTH trees so the delta cancels it; only a
 #                  real->tied/absent change a merge introduces trips it.
+#   joydbbind      joydb_binding_check.py FATAL (the `joydb joydb` instance
+#                  fails to bind one or more ports of the canonical
+#                  fork_ci_template/sys/joydb.sv module -- a merge / hand-
+#                  edit dropped or typo-renamed e.g. .joy_raw / .joydb_2ena
+#                  / .USER_OUT_DRIVE, leaving the controller path silently
+#                  dead while every other check stays green. Zero-FP by
+#                  construction (canonical defines truth); n/a for bespoke
+#                  cores (no wrapper), parse=2 fail-open.
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
   local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0
-  local mnrc=0 vprc=0 sgrc=0 toks=() id
+  local mnrc=0 vprc=0 sgrc=0 jbrc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -149,6 +158,8 @@ compute_tokens() {
     [ "$vprc" -eq 1 ] && toks+=("vprec")     # 1=FATAL; 2=parse (fail-open)
     python3 "$SATGATE" "$dir" "$csv" >/dev/null 2>&1 || sgrc=$?
     [ "$sgrc" -eq 1 ] && toks+=("satgate")   # 1=WEAK (delta-cancels legit tie)
+    python3 "$JOYDBBIND" "$dir" "$csv" >/dev/null 2>&1 || jbrc=$?
+    [ "$jbrc" -eq 1 ] && toks+=("joydbbind") # 1=FATAL; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything
