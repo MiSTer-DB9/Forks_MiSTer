@@ -32,6 +32,7 @@ MT32CHK="$HERE/lib/mt32_gate_check.py"
 SNACCHK="$HERE/lib/snac_active_check.py"
 CONFSTRCHK="$HERE/lib/confstr_joytype_check.py"
 CORESVLINT="$HERE/lib/coresv_lint.sh"
+QIPREG="$HERE/lib/qip_registration_check.py"
 # Advisory only, NEVER gates: joydb->joystick *semantic* role check
 # (Start=joydb[10], Select/Mode/Coin=joydb[11], arcade fire from joydb[4]).
 JOYDBSEM="$HERE/lib/joydb_semantic_check.py"
@@ -131,6 +132,13 @@ for c in "${cores[@]}"; do
   # Forks_MiSTer/fork_ci_template/sys. Independent of <core>.sv resolution.
   dr="$(canonical_drift_check "$ROOT/$c" 2>&1)" || cfail+="drift "
   out+="$dr"$'\n'
+  # Canonical fork sys/*.{v,sv} <-> sys.qip/sys.tcl registration. Core-dir
+  # only (no <core>.sv needed), so it runs alongside the drift check.
+  # FATAL=1 gates; n/a / parse(2) do not. Surfaces the InputTest/Menu
+  # unregistered-key-gate defect for manual triage.
+  qr="$(python3 "$QIPREG" "$ROOT/$c" 2>&1)"; qrc=$?
+  out+="$qr"$'\n'
+  [ "$qrc" -eq 1 ] && cfail+="qipreg "
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
     if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
@@ -142,7 +150,7 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:' \
       | sed 's/^/      /'
   fi
   # Advisory joydb-semantic WARNs are shown regardless of pass/fail and

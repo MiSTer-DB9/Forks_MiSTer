@@ -66,6 +66,24 @@ for b in joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v \
   fi
 done
 
+echo "== Tier 0: siphash24.{c,h} mirror byte-identical to Main_MiSTer =="
+# test/lib/siphash24.{c,h} is a hermetic mirror so test_gate_e2e.sh can prove
+# C<->Verilog parity without Main_MiSTer in the CI checkout. It MUST stay
+# byte-identical to the shipped Main_MiSTer source or the parity proof is
+# vacuous (same contract as the canonical sys/* cmp above).
+MAIN_SIP="$ROOT/Main_MiSTer"
+if [ -d "$MAIN_SIP" ]; then
+  for b in siphash24.c siphash24.h; do
+    if cmp -s "$MAIN_SIP/$b" "$HERE/lib/$b"; then
+      note "ok   lib/$b mirrors Main_MiSTer"
+    else
+      note "FAIL lib/$b drifted from Main_MiSTer/$b (refresh the mirror)"; fail=1
+    fi
+  done
+else
+  note "skip siphash24 mirror cmp (Main_MiSTer not in umbrella tree)"
+fi
+
 echo "== Tier 0: idempotency — apply_db9_framework (pass 2) =="
 if ! ( cd "$FORKS" && bash apply_db9_framework.sh "$DST" ) >"$WORK/apply2.log" 2>&1; then
   note "FAIL apply pass 2 returned nonzero:"; sed 's/^/    /' "$WORK/apply2.log"; fail=1

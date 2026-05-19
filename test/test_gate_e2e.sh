@@ -132,14 +132,78 @@ iverilog -g2012 -o "$WORK/tb.vvp" "$WORK/tb.v" \
 OUT=$(vvp "$WORK/tb.vvp" 2>&1)
 echo "$OUT" | grep -E '^(FAIL|PASS)' || true
 
-if echo "$OUT" | grep -q '^PASS_TB'; then
-    echo
-    echo "OK: v1.5 key gate end-to-end PASS"
-    echo "    (Python signer == Verilog verifier on fresh MASTER_ROOT)"
-    exit 0
-else
+if ! echo "$OUT" | grep -q '^PASS_TB'; then
     echo
     echo "FAIL: v1.5 key gate end-to-end test failed" >&2
     echo "      Verilog/Python SipHash interop or byte-order regression." >&2
     exit 1
 fi
+
+echo "== Step 6: C parity (siphash24.c == db9_sign.py == Verilog) =="
+# Steps 4-5 already proved Python signer == Verilog gate (PASS_TB) on the
+# signed payload. This closes the triangle: the byte-identical mirror
+# siphash24.c (run_tier0 cmp-guards it against Main_MiSTer/siphash24.c) must
+# compute the SAME tag as db9_sign.py for (a) the real signed payload and
+# (b) the canonical Aumasson vectors. A C-side rotate/endian/finalization
+# drift dies Main_MiSTer Saturn unlock fleet-wide while every FPGA test
+# stays green — this is the only check that sees it.
+if ! command -v cc >/dev/null 2>&1; then
+    echo "   SKIP: no cc — C parity not exercised (bare box; CI has cc)"
+    echo
+    echo "OK: v1.5 key gate end-to-end PASS"
+    echo "    (Python signer == Verilog verifier on fresh MASTER_ROOT;"
+    echo "     C parity skipped — no compiler)"
+    exit 0
+fi
+
+if ! cc -O2 -o "$WORK/sip_cli" "$SCRIPTS/siphash24_cli.c" "$SCRIPTS/siphash24.c" \
+     2>"$WORK/cc.log"; then
+    echo "FAIL: siphash24.c mirror did not compile" >&2
+    sed 's/^/    /' "$WORK/cc.log" >&2
+    exit 1
+fi
+
+# Emit "<sip_key_hex> <payload_hex> <python_tag_hex> <onfile_tag_hex>" for the
+# real signed key: sip_key = MASTER_ROOT[:16], payload = key file [0:32],
+# python_tag = db9_sign.siphash24(payload, sip_key), onfile = file [40:48].
+read -r KHEX PHEX PYTAG ONFILE < <(
+  python3 - "$SCRIPTS" "$WORK/master/master_root.bin" "$WORK/test.key" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from db9_sign import siphash24
+sip_key = open(sys.argv[2], "rb").read()[:16]
+data    = open(sys.argv[3], "rb").read()
+payload = data[:32]
+print(sip_key.hex(), payload.hex(),
+      siphash24(payload, sip_key).hex(), data[40:48].hex())
+PY
+)
+CTAG=$("$WORK/sip_cli" "$KHEX" "$PHEX")
+if [ "$CTAG" != "$PYTAG" ] || [ "$CTAG" != "$ONFILE" ]; then
+    echo "FAIL: SipHash C<->Python<->key drift on signed payload" >&2
+    echo "      C=$CTAG  python=$PYTAG  on-file=$ONFILE" >&2
+    exit 1
+fi
+echo "   signed-payload tag parity OK ($CTAG)"
+
+# Canonical Aumasson vectors (key = 00 01 .. 0f), same triplet db9_sign.py's
+# import-time _self_test() pins for Python — here proving C agrees too.
+av_fail=0
+check_vec() { # <msg_hex> <expected_tag_hex>
+    local got; got=$("$WORK/sip_cli" "000102030405060708090a0b0c0d0e0f" "$1")
+    if [ "$got" != "$2" ]; then
+        echo "FAIL: Aumasson vector msg='$1' C=$got want=$2" >&2
+        av_fail=1
+    fi
+}
+check_vec ""                                       "310e0edd47db6f72"
+check_vec "00"                                     "fd67dc93c539f874"
+check_vec "000102030405060708090a0b0c0d0e"         "e545be4961ca29a1"
+[ "$av_fail" -eq 0 ] || exit 1
+echo "   Aumasson reference vectors OK (C == spec == db9_sign.py)"
+
+echo
+echo "OK: v1.5 key gate end-to-end PASS"
+echo "    (Python signer == Verilog verifier == siphash24.c on fresh"
+echo "     MASTER_ROOT + Aumasson vectors)"
+exit 0

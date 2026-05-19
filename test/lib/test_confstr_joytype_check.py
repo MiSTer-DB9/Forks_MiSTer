@@ -5,6 +5,7 @@
 #   * bracket form aligned                  -> ok    exit 0
 #   * legacy letter `oUV` vs status[127:126]-> FATAL exit 1 (NES 7fc497b)
 #   * UserIO Players bit mismatch           -> FATAL exit 1
+#   * option bit > hps_io status width      -> FATAL exit 1 (over-width)
 #   * decode wire but no UserIO option      -> n/a   exit 0 (computer core,
 #                                              NO false positive)
 #   * no joy_type decode wire               -> n/a   exit 0
@@ -26,6 +27,7 @@ CASES = [
     ("ok_bracket/NES_MiSTer",    "nes.sv", 0, "aligned with joy_type/joy_2p"),
     ("bad_joytype/NES_MiSTer",   "nes.sv", 1, "7fc497b class"),
     ("bad_players/NES_MiSTer",   "nes.sv", 1, "UserIO Players` writes"),
+    ("overwidth/NES_MiSTer",     "nes.sv", 1, "unobservable"),
     ("noopt/AtariST_MiSTer",     "at.sv",  0, "ext_ctrl-mirror computer core"),
     ("nowire/Foo_MiSTer",        "foo.sv", 0, "no joy_type[_raw] decode wire"),
     ("legacy_ok/Bar_MiSTer",     "bar.sv", 0, "aligned with joy_type/joy_2p"),

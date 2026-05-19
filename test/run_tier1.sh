@@ -106,5 +106,13 @@ else
   note "confstr_joytype_check selftest FAIL"; sed 's/^/    /' "$WORK/cf.log"; fail=1
 fi
 
+echo "== Tier 1: qip_registration_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_qip_registration_check.py" >"$WORK/qr.log" 2>&1 \
+   && grep -q "QIPREG selftest: PASS" "$WORK/qr.log"; then
+  note "qip_registration_check selftest PASS"
+else
+  note "qip_registration_check selftest FAIL"; sed 's/^/    /' "$WORK/qr.log"; fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER1: PASS"; exit 0; else echo "TIER1: FAIL"; exit 1; fi

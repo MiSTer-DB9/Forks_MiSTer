@@ -1,0 +1,1 @@
+../../test/lib/qip_registration_check.py

@@ -29,8 +29,17 @@
 # at the wrong bits; FATAL is scoped to exactly that, keeping the zero-false-
 # positive contract of the other FATAL-tier checks (snac/mt32/joydb).
 #
+# ALSO checks one CONF_STR defect independent of the joy_type decode (so it
+# applies even on nowire/noopt cores): any option bit beyond the core's
+# hps_io status width (the same width step6 #10 reads; the write is
+# unobservable). Unambiguous, zero false positives. Intra-CONF_STR bit
+# *overlap* was evaluated and intentionally NOT checked — see
+# _structural_issues (shared bits are legitimately mode-arbitrated in HDL,
+# so a static overlap rule cannot honour the zero-FP contract).
+#
 # Usage:  confstr_joytype_check.py <core_dir> [<core_sv_basename>]
-# Exit:   0 = aligned / n-a, 1 = FATAL misalignment, 2 = parse/layout.
+# Exit:   0 = aligned / n-a, 1 = FATAL (misalign / over-width),
+#         2 = parse/layout.
 
 import os
 import re
@@ -88,15 +97,21 @@ def _opt_bits(spec):
     return set(range(min(a, b), max(a, b) + 1))
 
 
-def _confstr_option(text, label):
-    """Reconstruct the CONF_STR concatenation and return the option spec
-    whose comma-field[1] matches `label` (case-insensitive, trimmed), or
-    None if absent."""
+def _confstr_blob(text):
+    """Reconstructed CONF_STR concatenation (quoted segments joined, \\t
+    materialised), or None if there is no CONF_STR."""
     m = CONFSTR_RE.search(text)
     if not m:
         return None
-    blob = "".join(QUOTED_RE.findall(m.group(1)))
-    blob = blob.replace("\\t", "\t")
+    return "".join(QUOTED_RE.findall(m.group(1))).replace("\\t", "\t")
+
+
+def _confstr_option(text, label):
+    """Option spec (comma-field[0]) whose comma-field[1] matches `label`
+    (case-insensitive, trimmed), or None if absent."""
+    blob = _confstr_blob(text)
+    if blob is None:
+        return None
     for element in blob.split(";"):
         fields = element.split(",")
         if len(fields) >= 2 and fields[1].strip().lower() == label.lower():
@@ -104,24 +119,89 @@ def _confstr_option(text, label):
     return None
 
 
-def analyze(core_sv):
+def _iter_options(text):
+    """Yield (label, spec) for every CONF_STR element that has a label."""
+    blob = _confstr_blob(text)
+    if blob is None:
+        return
+    for element in blob.split(";"):
+        fields = element.split(",")
+        if len(fields) >= 2:
+            yield fields[1].strip(), fields[0].strip()
+
+
+_HPS_W_RE = re.compile(
+    r"output\s+reg\s*\[\s*(31|63|127)\s*:\s*0\s*\]\s*status\b")
+
+
+def _hps_width(core_dir):
+    """hps_io status MSB (31/63/127) the way step6.sh reads it, or None if
+    sys/hps_io.{sv,v} is absent/unparseable (caller treats None as fail-open,
+    same as step6 #10's own behaviour)."""
+    if not core_dir:
+        return None
+    for cand in ("sys/hps_io.sv", "sys/hps_io.v"):
+        p = os.path.join(core_dir, cand)
+        try:
+            mm = _HPS_W_RE.search(open(p, "r", errors="replace").read())
+        except OSError:
+            continue
+        if mm:
+            return int(mm.group(1))
+    return None
+
+
+def _structural_issues(text, core_dir):
+    """CONF_STR defect independent of the joy_type decode: any option bit
+    beyond the core's hps_io status width (the same width step6 #10 reads) —
+    a write the core can never observe. Unambiguous, zero false positives.
+
+    Intra-CONF_STR bit *overlap* was evaluated and deliberately NOT checked:
+    MiSTer cores intentionally bind one status bit to two options that are
+    mutually exclusive by RUNTIME mode rather than by a CONF_STR D/H flag
+    (e.g. Saturn `P2O[125]` is BOTH `UserIO Players` and `SNAC Players`,
+    arbitrated in HDL by `snac_active`; upstream CDi reuses status[19]).
+    Whether a shared bit is a defect is not statically decidable from
+    CONF_STR alone, so an overlap rule cannot honour the zero-FP contract
+    the other FATAL-tier checks hold — it is intentionally omitted."""
+    issues = []
+    max_bit = -1
+    for _label, spec in _iter_options(text):
+        bits = _opt_bits(spec)
+        if bits:
+            max_bit = max(max_bit, max(bits))
+    hw = _hps_width(core_dir)
+    if hw is not None and max_bit > hw:
+        issues.append((
+            FATAL,
+            f"a CONF_STR option references status[{max_bit}] but "
+            f"sys/hps_io declares only status[{hw}:0] — the write is "
+            f"unobservable (widen hps_io or fix the option)"))
+    return issues
+
+
+def analyze(core_sv, core_dir=None):
     """Return (status, issues):
-      status "nowire"  -> no joy_type decode wire (bespoke)            -> n/a
-      status "noopt"   -> decode wire but no UserIO Joystick option
-                          (ext_ctrl-mirror computer core)              -> n/a
-      status "checked" -> option present; issues = FATAL list ([]=ok)
+      status "nowire"  -> no joy_type decode wire, no structural defect -> n/a
+      status "noopt"   -> decode wire but no UserIO Joystick option,
+                          no structural defect (computer core)          -> n/a
+      status "checked" -> issues = FATAL list ([]=ok). Structural defects
+                          (overlap/width) force this even with no decode
+                          wire / no UserIO option.
     Raises only OSError."""
     text = strip_comments(open(core_sv, "r", errors="replace").read())
+    extra = _structural_issues(text, core_dir)
     jt = JOYTYPE_RE.search(text)
     if not jt:
-        return "nowire", []
+        return ("checked", extra) if extra else ("nowire", [])
+
     hi, lo = int(jt.group(1)), int(jt.group(2))
     jt_bits = set(range(min(hi, lo), max(hi, lo) + 1))
     issues = []
 
     spec = _confstr_option(text, "UserIO Joystick")
     if spec is None:
-        return "noopt", []
+        return ("checked", extra) if extra else ("noopt", [])
     bits = _opt_bits(spec)
     if bits is None:
         issues.append((
@@ -148,7 +228,7 @@ def analyze(core_sv):
                     f"`UserIO Players` writes status{sorted(pbits)} but "
                     f"joy_2p is decoded from status[{b}] — align to "
                     f"`O[{b}]`"))
-    return "checked", issues
+    return "checked", issues + extra
 
 
 def main(argv):
@@ -170,7 +250,7 @@ def main(argv):
         return 2
 
     try:
-        status, issues = analyze(core_sv)
+        status, issues = analyze(core_sv, core_dir)
     except OSError as e:
         print(f"  confstr: FAIL parse error ({e})")
         return 2

@@ -41,6 +41,7 @@ SNACCHK="${SCRIPT_DIR}/snac_active_check.py"
 JOYDBSEM="${SCRIPT_DIR}/joydb_semantic_check.py"
 CONFSTRCHK="${SCRIPT_DIR}/confstr_joytype_check.py"
 CORESVLINT="${SCRIPT_DIR}/coresv_lint.sh"
+QIPREG="${SCRIPT_DIR}/qip_registration_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -75,6 +76,11 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  porter-regex / merge breakage; verilator oracle, iverilog
 #                  fallback, SKIP=2 fail-open if neither present). See its
 #                  header for the regression-delta rationale.
+#   qipreg         qip_registration_check.py FATAL (a canonical fork
+#                  sys/*.{v,sv} present but unregistered in sys.qip/sys.tcl,
+#                  or a dangling registration -- Quartus silently skips the
+#                  file; the InputTest/Menu class. n/a for pristine cores,
+#                  parse=2 fail-open).
 #   joydbsem       joydb_semantic_check.py FATAL (P1/P2 role transpose:
 #                  same joydb bit-set, swapped concat order, a role bit at
 #                  a mismatched position, single shared role in CONF_STR --
@@ -86,7 +92,7 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
-  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 toks=() id
+  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -114,6 +120,8 @@ compute_tokens() {
     [ "$cfrc" -eq 1 ] && toks+=("confstr")   # 1=FATAL; 2=parse (fail-open)
     bash "$CORESVLINT" "$dir" "$csv" >/dev/null 2>&1 || crc=$?
     [ "$crc" -eq 1 ] && toks+=("coresv")     # 1=syntax err; 2=parse (fail-open)
+    python3 "$QIPREG" "$dir" >/dev/null 2>&1 || qrc=$?
+    [ "$qrc" -eq 1 ] && toks+=("qipreg")     # 1=FATAL; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything
