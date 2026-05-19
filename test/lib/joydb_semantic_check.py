@@ -25,21 +25,23 @@
 #   [12]=Saturn L-trig  [13] unused  [15:14] never live.
 #
 # Split severity model (see the FATAL/WARN/INFO contract just below).
-# run_fleet_audit.sh gates on FATAL only and surfaces WARN as a GitHub
-# ::warning:: annotation; nothing here is wired into merge_validate.sh, so
-# even a FATAL can never wedge the autonomous stable/unstable merge +
-# release pipeline -- it only stops the maintainer pre-sync fleet audit,
-# where a human is in the loop to triage a CONF_STR-heuristic miss.
+# run_fleet_audit.sh gates on FATAL and surfaces WARN as a GitHub
+# ::warning:: annotation. merge_validate.sh also tokenises FATAL, but
+# REGRESSION-ONLY (delta vs the pre-merge baseline): a benign upstream
+# CONF_STR rename cannot wedge the release pipeline because it does not
+# NEWLY introduce a transpose; only a merge that actually creates one
+# trips it. WARN exits 0 -> never tokenised -> never wedges anything.
 #
 # Two tiers:
 #   FATAL : P1/P2 role transpose -- same joydb bit-set, different concat
 #           order, a role bit (Start[10]/Select[11]) at a mismatched
 #           position, and CONF_STR has a single shared role (no Start
-#           1P/2P). This is the Arcade-ComputerSpace bug class. GATES the
-#           maintainer fleet audit (NOT merge_validate -- a benign upstream
-#           CONF_STR rename must never wedge the release pipeline).
+#           1P/2P). Arcade-ComputerSpace/GnW bug class. Gates the
+#           maintainer fleet audit (hard) and merge_validate.sh
+#           (regression-only delta).
 #   WARN  : advisory role checks (Start/Select/fire). Surfaced as GitHub
-#           ::warning:: annotations, never gates anything.
+#           ::warning:: annotations + a $GITHUB_STEP_SUMMARY digest in
+#           run_fleet_audit; never tokenised, never gates anything.
 #   INFO  : legitimate-but-notable (no Select/Coin; 8-bit DB9 budget;
 #           CONF_STR J-line absent so role presence unverifiable).
 #

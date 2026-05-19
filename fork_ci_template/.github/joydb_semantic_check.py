@@ -1,0 +1,1 @@
+../../test/lib/joydb_semantic_check.py
