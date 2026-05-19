@@ -51,7 +51,7 @@ compute_tokens() {
   local pm rc=0 csv s6 toks=() id
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] && toks+=("portmap")
-  csv="$(printf '%s\n' "$pm" | sed -n 's/^  portmap-coresv: //p')"
+  csv="$(printf '%s\n' "$pm" | extract_portmap_coresv)"
   if [ -z "$csv" ]; then
     toks+=("no-core-sv")
   else
@@ -63,6 +63,9 @@ compute_tokens() {
       esac
     done < <(printf '%s\n' "$s6" | sed -n 's/^  step6: FAIL \([^ ]*\).*/\1/p')
   fi
+  # No blocking failures → empty output, success. Same empty output on a rare
+  # internal error; the caller is fail-open by design (delta cancels anything
+  # present in both baseline and check), so the two are intentionally fungible.
   [ "${#toks[@]}" -eq 0 ] && return 0
   printf '%s\n' "${toks[@]}" | sort -u
 }
@@ -74,7 +77,7 @@ CORE_DIR="${2%/}"
 
 case "$MODE" in
   baseline)
-    if compute_tokens "$CORE_DIR" > "$BASELINE_FILE"; then :; fi
+    compute_tokens "$CORE_DIR" > "$BASELINE_FILE" || true
     echo "merge_validate: pre-merge baseline ($(wc -l < "$BASELINE_FILE" | tr -d ' ') blocking failure(s)):"
     sed 's/^/  /' "$BASELINE_FILE" || true
     exit 0

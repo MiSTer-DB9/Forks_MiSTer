@@ -11,6 +11,12 @@
 # Run from inside (or with) a git work tree for the EOL / .qsf / status
 # checks. Designed to be sourced or executed.
 
+# Single-source parser for emu_portmap_check.py's machine-readable
+# `  portmap-coresv: <basename>` line (the resolved top <core>.sv). Both
+# run_fleet_audit.sh and merge_validate.sh feed portmap stdout through this so
+# the output contract lives in exactly one place. Reads stdin.
+extract_portmap_coresv() { sed -n 's/^  portmap-coresv: //p'; }
+
 step6_verify() {
   local dir="$1" sv="$2"
   local f="$dir/$sv"

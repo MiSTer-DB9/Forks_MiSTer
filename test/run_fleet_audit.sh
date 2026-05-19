@@ -57,7 +57,7 @@ for c in "${cores[@]}"; do
   # `portmap-coresv:` line, so step6 reuses it without a second process.
   if ! pm="$(python3 "$PORTMAP" "$ROOT/$c" 2>&1)"; then cfail+="portmap "; fi
   out+="$pm"$'\n'
-  csv="$(printf '%s\n' "$pm" | sed -n 's/^  portmap-coresv: //p')"
+  csv="$(printf '%s\n' "$pm" | extract_portmap_coresv)"
   if [ -n "$csv" ]; then
     if ! s6="$(step6_verify "$ROOT/$c" "$csv" 2>&1)"; then cfail+="step6 "; fi
     out+="$s6"$'\n'
