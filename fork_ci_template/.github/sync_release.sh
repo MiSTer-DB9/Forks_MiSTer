@@ -108,10 +108,20 @@ fi
 echo "END rerere-train.sh"
 echo
 
+# Snapshot the PRE-merge port-wiring failures so the post-merge gate below can
+# fail only on regressions the upstream merge itself introduced (best-effort —
+# a bad baseline must never block the sync).
+./.github/merge_validate.sh baseline . || true
+
 git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
 
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"
+
+# post-merge port-validation gate (fork-only; regression-only). Aborts before
+# the merge is committed/pushed to ${MAIN_BRANCH}, exactly like the collision
+# tripwire above.
+./.github/merge_validate.sh check . || ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"
 
 git submodule update --init --recursive
 

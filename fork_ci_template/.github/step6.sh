@@ -1,0 +1,1 @@
+../../test/lib/step6.sh

@@ -56,6 +56,11 @@ train_rerere
 echo "END rerere-train"
 echo
 
+# Snapshot the PRE-merge port-wiring failures (post-catchup unstable branch, =
+# the correct pre-upstream-merge state) so the gate below fails only on
+# regressions the upstream merge introduced. Best-effort — never blocks.
+./.github/merge_validate.sh baseline . || true
+
 # Merge upstream HEAD into unstable. On conflict, notify_error.sh emails the
 # maintainer + exits 1; the unstable branch stays at the catchup-only state, so
 # a partial merge never lands on origin. Maintainer resolves manually; the next
@@ -66,6 +71,11 @@ git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
 
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UNSTABLE STATUS BIT COLLISION" "$@"
+
+# post-merge port-validation gate (fork-only; regression-only). Runs before the
+# push + source-hash skip below, so a merge that breaks DB9 wiring never lands
+# on origin/${UNSTABLE_BRANCH} — exactly like the collision tripwire above.
+./.github/merge_validate.sh check . || ./.github/notify_error.sh "UNSTABLE MERGE BROKE PORT VALIDATION" "$@"
 
 # Push the merge commits to origin/${UNSTABLE_BRANCH} before the build legs —
 # anchors the rerere-trained merge state (replayable next run even if Quartus
