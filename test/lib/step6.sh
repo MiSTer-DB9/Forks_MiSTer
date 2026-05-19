@@ -19,8 +19,25 @@ step6_verify() {
 
   _ok()   { printf '  %s ok   %s\n' "$p" "$1"; }
   _bad()  { printf '  %s FAIL %s\n' "$p" "$1"; rc=1; }
+  _na()   { printf '  %s n/a  %s\n' "$p" "$1"; }
 
   [ -f "$f" ] || { _bad "core sv not found: $f"; return 1; }
+
+  # Bespoke (non-wrapper) DB9 core: a hand-written inline DB9/DB15/Saturn
+  # implementation that deliberately does NOT instantiate the `joydb joydb`
+  # wrapper and (for some, e.g. Menu_MiSTer) does the key check in Main_MiSTer
+  # instead of the FPGA db9_key_gate. Such a core legitimately lacks the
+  # porter-standard shape, so the wrapper-shape checks (4 Pro-present, 4b
+  # saturn_unlocked, 5 wrapper-instance, 6 *_DRIVE) are not applicable.
+  # Predicate is generic (no core-name allowlist) and tight: no wrapper
+  # instance AND the core drives USER_OUT/USER_OSD inline itself. A standard
+  # core that merely lost its wrapper has no inline assigns -> still FAILs.
+  local bespoke=0
+  if ! grep -q 'joydb joydb' "$f" \
+     && grep -qE '^[ \t]*assign[ \t]+USER_OUT\b'  "$f" \
+     && grep -qE '^[ \t]*assign[ \t]+USER_OSD\b'  "$f"; then
+    bespoke=1
+  fi
 
   # 1. No CRLF/EOL noise introduced
   if [ "$(git -C "$dir" diff --stat | tail -1)" = \
@@ -46,25 +63,40 @@ step6_verify() {
     /\[MiSTer-DB9 BEGIN\]/{b++} /\[MiSTer-DB9 END\]/{e++}
     /\[MiSTer-DB9-Pro BEGIN\]/{pb++} /\[MiSTer-DB9-Pro END\]/{pe++}
     END{printf "db9b=%d db9e=%d prb=%d pre=%d", b+0, e+0, pb+0, pe+0}' "$f")"
-  if [ "$db9b" = "$db9e" ] && [ "$prb" = "$pre" ] && [ "$prb" -ge 1 ]; then
-    _ok "4 markers balanced (DB9 $db9b Pro $prb)";
-  else _bad "4 marker imbalance (DB9 $db9b/$db9e Pro $prb/$pre)"; fi
+  if [ "$db9b" != "$db9e" ] || [ "$prb" != "$pre" ]; then
+    _bad "4 marker imbalance (DB9 $db9b/$db9e Pro $prb/$pre)"
+  elif [ "$prb" -ge 1 ]; then
+    _ok "4 markers balanced (DB9 $db9b Pro $prb)"
+  elif [ "$bespoke" = 1 ]; then
+    _na "4 markers balanced, Pro absent (bespoke: key check in Main_MiSTer)"
+  else
+    _bad "4 no Pro markers (DB9 $db9b/$db9e Pro $prb/$pre)"
+  fi
   # 4b. saturn_unlocked must be deliberately connected. A constant tie is
   #     allowed (InputTest_MiSTer ties 1'b1 — always-unlocked test core);
-  #     the defect is an absent/undriven connection.
+  #     the defect is an absent/undriven connection. Bespoke cores gate
+  #     Saturn in Main_MiSTer, not via this port.
   if grep -qE '\.saturn_unlocked *\( *(saturn_unlocked|1.b[01]) *\)' "$f"; then
-    _ok "4b saturn_unlocked wired"; else _bad "4b saturn_unlocked not wired"; fi
+    _ok "4b saturn_unlocked wired"
+  elif [ "$bespoke" = 1 ]; then _na "4b saturn_unlocked n/a (bespoke)"
+  else _bad "4b saturn_unlocked not wired"; fi
 
-  # 5. Wrapper instance present, no inline decoders
-  if grep -q 'joydb joydb' "$f" \
+  # 5. Wrapper instance present, no inline decoders. Bespoke cores
+  #    intentionally inline the decode and have no wrapper instance.
+  if [ "$bespoke" = 1 ]; then
+    _na "5 inline DB9 decode (bespoke: no joydb wrapper by design)"
+  elif grep -q 'joydb joydb' "$f" \
      && ! grep -q 'joy_db9md '     "$f" \
      && ! grep -q 'joy_db15 '      "$f" \
      && ! grep -q 'joy_db9saturn ' "$f"; then
     _ok "5 wrapper instance, no inline decoders";
   else _bad "5 wrapper/inline-decoder check"; fi
 
-  # 6. USER_OUT / USER_PP composed from wrapper outputs
-  if grep -q 'USER_OUT_DRIVE' "$f" && grep -q 'USER_PP_DRIVE' "$f"; then
+  # 6. USER_OUT / USER_PP composed from wrapper outputs. Bespoke cores
+  #    drive USER_OUT/USER_PP via their own inline assigns, not *_DRIVE.
+  if [ "$bespoke" = 1 ]; then
+    _na "6 inline USER_OUT/USER_PP drive (bespoke)"
+  elif grep -q 'USER_OUT_DRIVE' "$f" && grep -q 'USER_PP_DRIVE' "$f"; then
     _ok "6 USER_OUT_DRIVE/USER_PP_DRIVE composed";
   else _bad "6 *_DRIVE not composed"; fi
 
