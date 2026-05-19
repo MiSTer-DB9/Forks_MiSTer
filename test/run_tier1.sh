@@ -114,5 +114,37 @@ else
   note "qip_registration_check selftest FAIL"; sed 's/^/    /' "$WORK/qr.log"; fail=1
 fi
 
+echo "== Tier 1: marker_nesting_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_marker_nesting_check.py" >"$WORK/mn.log" 2>&1 \
+   && grep -q "MARKERNEST selftest: PASS" "$WORK/mn.log"; then
+  note "marker_nesting_check selftest PASS"
+else
+  note "marker_nesting_check selftest FAIL"; sed 's/^/    /' "$WORK/mn.log"; fail=1
+fi
+
+echo "== Tier 1: verilog_precedence_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_verilog_precedence_check.py" >"$WORK/vp.log" 2>&1 \
+   && grep -q "VPREC selftest: PASS" "$WORK/vp.log"; then
+  note "verilog_precedence_check selftest PASS"
+else
+  note "verilog_precedence_check selftest FAIL"; sed 's/^/    /' "$WORK/vp.log"; fail=1
+fi
+
+echo "== Tier 1: saturn_gate_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_saturn_gate_check.py" >"$WORK/sg.log" 2>&1 \
+   && grep -q "SATGATE selftest: PASS" "$WORK/sg.log"; then
+  note "saturn_gate_check selftest PASS"
+else
+  note "saturn_gate_check selftest FAIL"; sed 's/^/    /' "$WORK/sg.log"; fail=1
+fi
+
+echo "== Tier 1: forks_ini_check selftest (fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_forks_ini_check.py" >"$WORK/fi.log" 2>&1 \
+   && grep -q "FORKSINI selftest: PASS" "$WORK/fi.log"; then
+  note "forks_ini_check selftest PASS"
+else
+  note "forks_ini_check selftest FAIL"; sed 's/^/    /' "$WORK/fi.log"; fail=1
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then echo "TIER1: PASS"; exit 0; else echo "TIER1: FAIL"; exit 1; fi

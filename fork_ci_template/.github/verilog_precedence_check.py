@@ -1,0 +1,1 @@
+../../test/lib/verilog_precedence_check.py

@@ -30,12 +30,26 @@
 #      basename). A casing typo in either URL desyncs the basenames and trips
 #      here with no normalization assumption (some upstream repos really are
 #      spelt `_MISTer`/`_Mister` — we must NOT force `MiSTer`).
+#   6. Distribution slug-collision, mirroring the Distribution_MiSTer hooks
+#      VERBATIM (the only zero-FP construction). `slugify(RELEASE_CORE_NAME)
+#      = re.sub(r'[^a-z0-9]', '', rcn.lower())` is the tag id the unstable /
+#      stable hooks reserve; two distinct sections hashing to the same slug
+#      make the hooks `::error::` + `exit(1)` 10+ min into a distribution
+#      build (inject_unstable_tags.py:87 / inject_stable_clean_slugs.py:151).
+#      Scoped per channel exactly as the hooks do: among UNSTABLE_FORKS
+#      sections (all, no skip); among SYNCING_FORKS sections that do NOT set
+#      DISTRIBUTION_FILTERS (Hook-3-owned sections are `continue`d before the
+#      stable hook's collision guard, so flagging them would be a FP). A
+#      section with no RELEASE_CORE_NAME is skipped (the hooks warn+continue,
+#      not error). Live Forks.ini is clean (160 unique) -> pure regression
+#      guard catching the collision at lint instead of mid-build.
 #
 # Usage:  forks_ini_check.py [<path/to/Forks.ini>]   (default ./Forks.ini)
 # Exit:   0 = clean, 1 = violation(s), 2 = file/parse error.
 
 import configparser
 import os
+import re
 import sys
 
 ORG_PREFIX = "https://github.com/MiSTer-DB9/"
@@ -44,6 +58,39 @@ REQUIRED_KEYS = ("FORK_REPO", "UPSTREAM_REPO", "MAIN_BRANCH")
 
 def _basename(url):
     return os.path.basename(url.rstrip("/")).removesuffix(".git")
+
+
+def _slugify(rcn):
+    # Distribution_MiSTer hooks, verbatim (inject_unstable_tags.py:51 /
+    # inject_stable_clean_slugs.py:80).
+    return re.sub(r"[^a-z0-9]", "", rcn.lower())
+
+
+def _slug_collisions(c, list_key, skip_filtered):
+    """Mirror one Distribution hook's per-channel slug-collision guard.
+    `fork_name` (the *_FORKS token = section name) is the identity, exactly
+    like the hooks' `seen_slugs[slug] != fork_name`."""
+    errs = []
+    if not c.has_option("Forks", list_key):
+        return errs
+    seen = {}                                  # slug -> section name
+    for sec in c.get("Forks", list_key).split():
+        if not c.has_section(sec):
+            continue                           # ref-integrity (#3) reports it
+        rcn = c[sec].get("RELEASE_CORE_NAME", "").strip()
+        if not rcn:
+            continue                           # hooks warn+continue, not error
+        if skip_filtered and c[sec].get("DISTRIBUTION_FILTERS", "").strip():
+            continue                           # Hook-3-owned: hook `continue`s
+        slug = _slugify(rcn)
+        if slug in seen and seen[slug] != sec:
+            errs.append(
+                f"[Forks] {list_key}: slug collision `{slug}` between "
+                f"[{seen[slug]}] and [{sec}] (RELEASE_CORE_NAME `{rcn}`) — "
+                f"the Distribution hook would ::error:: + exit 1 mid-build")
+        else:
+            seen[slug] = sec
+    return errs
 
 
 def check(path):
@@ -105,13 +152,17 @@ def check(path):
                 f"`{_basename(fr)}` != `{_basename(ur)}` "
                 f"(casing/typo desync — the 4d2f0af class)")
 
+    # 6. Distribution slug-collision, per channel, mirroring the hooks.
+    errs += _slug_collisions(c, "SYNCING_FORKS", skip_filtered=True)
+    errs += _slug_collisions(c, "UNSTABLE_FORKS", skip_filtered=False)
+
     if errs:
         print(f"forks-ini: FAIL ({len(errs)} issue(s)):")
         for e in errs:
             print(f"  - {e}")
         return 1
     print(f"forks-ini: ok  {len(secs)} sections, lists sorted, "
-          f"refs + FORK/UPSTREAM parity clean")
+          f"refs + FORK/UPSTREAM parity + distribution slugs clean")
     return 0
 
 

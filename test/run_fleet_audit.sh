@@ -33,9 +33,15 @@ SNACCHK="$HERE/lib/snac_active_check.py"
 CONFSTRCHK="$HERE/lib/confstr_joytype_check.py"
 CORESVLINT="$HERE/lib/coresv_lint.sh"
 QIPREG="$HERE/lib/qip_registration_check.py"
+MARKERNEST="$HERE/lib/marker_nesting_check.py"
+VPREC="$HERE/lib/verilog_precedence_check.py"
 # Advisory only, NEVER gates: joydb->joystick *semantic* role check
 # (Start=joydb[10], Select/Mode/Coin=joydb[11], arcade fire from joydb[4]).
 JOYDBSEM="$HERE/lib/joydb_semantic_check.py"
+# Advisory only, NEVER gates here: saturn_unlocked AND-gate. A legitimately
+# tied test core (InputTest 1'b1) is WEAK absolutely -> only the
+# merge_validate baseline/check delta can gate it without a false positive.
+SATGATE="$HERE/lib/saturn_gate_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 # shellcheck source=lib/canonical_drift_check.sh
@@ -139,6 +145,23 @@ for c in "${cores[@]}"; do
   qr="$(python3 "$QIPREG" "$ROOT/$c" 2>&1)"; qrc=$?
   out+="$qr"$'\n'
   [ "$qrc" -eq 1 ] && cfail+="qipreg "
+  # Fork-marker nesting/balance in <core>.sv + sys/sys_top.v (the SNES
+  # dc15e64 class step6 #4's count cannot see). Reuses the resolved
+  # <core>.sv. FATAL=1 gates; n/a / parse(2) do not.
+  mn="$(python3 "$MARKERNEST" "$ROOT/$c" "$csv" 2>&1)"; mnrc=$?
+  out+="$mn"$'\n'
+  [ "$mnrc" -eq 1 ] && cfail+="markers "
+  # ||/&& bare-literal precedence over the WHOLE core .v/.sv tree (the
+  # 3a94b0a constant-true-arm class). FATAL=1 gates; n/a(no .v/.sv)/
+  # parse(2) do not.
+  vp="$(python3 "$VPREC" "$ROOT/$c" 2>&1)"; vprc=$?
+  out+="$vp"$'\n'
+  [ "$vprc" -eq 1 ] && cfail+="vprec "
+  # saturn_unlocked AND-gate -- ADVISORY ONLY here (a legit tied test core
+  # is WEAK absolutely; the real gate is the merge_validate delta). Never
+  # touches cfail; surfaced below like the joydbsem WARN tier.
+  sg="$(python3 "$SATGATE" "$ROOT/$c" "$csv" 2>&1)"
+  out+="$sg"$'\n'
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
     if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
@@ -150,12 +173,14 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:|marker-nest:|vprec:|satgate:' \
       | sed 's/^/      /'
   fi
-  # Advisory joydb-semantic WARNs are shown regardless of pass/fail and
-  # never change the exit code.
+  # Advisory joydb-semantic WARNs + satgate WEAK are shown regardless of
+  # pass/fail and never change the exit code.
   printf '%s\n' "$out" | grep -E 'joydbsem: WARN' | sed 's/^/      SEM /' \
+    || true
+  printf '%s\n' "$out" | grep -E 'satgate: WEAK' | sed 's/^/      SAT /' \
     || true
 done
 

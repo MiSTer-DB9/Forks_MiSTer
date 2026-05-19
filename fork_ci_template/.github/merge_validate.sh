@@ -42,6 +42,9 @@ JOYDBSEM="${SCRIPT_DIR}/joydb_semantic_check.py"
 CONFSTRCHK="${SCRIPT_DIR}/confstr_joytype_check.py"
 CORESVLINT="${SCRIPT_DIR}/coresv_lint.sh"
 QIPREG="${SCRIPT_DIR}/qip_registration_check.py"
+MARKERNEST="${SCRIPT_DIR}/marker_nesting_check.py"
+VPREC="${SCRIPT_DIR}/verilog_precedence_check.py"
+SATGATE="${SCRIPT_DIR}/saturn_gate_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -90,10 +93,27 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  tokenised, so a benign upstream CONF_STR rename cannot
 #                  wedge: only a merge that NEWLY introduces a transpose
 #                  trips it (regression-only delta cancels pre-existing).
+#   markers        marker_nesting_check.py FATAL (orphan END / wrong-family
+#                  close / unclosed BEGIN in <core>.sv or sys/sys_top.v --
+#                  the SNES dc15e64 class step6 #4's count cannot see).
+#                  n/a for pristine cores, parse=2 fail-open.
+#   vprec          verilog_precedence_check.py FATAL (a bare non-zero
+#                  literal as the whole operand of ||/&& -- the 3a94b0a
+#                  constant-true-arm class; scans the WHOLE core .v/.sv
+#                  tree). Delta is essential: it sees upstream-origin RTL,
+#                  so a pre-existing upstream quirk must cancel; only a
+#                  merge that NEWLY introduces one trips it.
+#   satgate        saturn_gate_check.py WEAK (a Saturn-capable wrapper core
+#                  whose .saturn_unlocked is a constant tie or unconnected
+#                  -> key gate decorative). Delta is the ONLY zero-FP form:
+#                  a legitimately-tied test core (InputTest 1'b1) is WEAK
+#                  in BOTH trees so the delta cancels it; only a
+#                  real->tied/absent change a merge introduces trips it.
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
-  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0 toks=() id
+  local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0
+  local mnrc=0 vprc=0 sgrc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -123,6 +143,12 @@ compute_tokens() {
     [ "$crc" -eq 1 ] && toks+=("coresv")     # 1=syntax err; 2=parse (fail-open)
     python3 "$QIPREG" "$dir" >/dev/null 2>&1 || qrc=$?
     [ "$qrc" -eq 1 ] && toks+=("qipreg")     # 1=FATAL; 2=parse (fail-open)
+    python3 "$MARKERNEST" "$dir" "$csv" >/dev/null 2>&1 || mnrc=$?
+    [ "$mnrc" -eq 1 ] && toks+=("markers")   # 1=FATAL; 2=parse (fail-open)
+    python3 "$VPREC" "$dir" >/dev/null 2>&1 || vprc=$?
+    [ "$vprc" -eq 1 ] && toks+=("vprec")     # 1=FATAL; 2=parse (fail-open)
+    python3 "$SATGATE" "$dir" "$csv" >/dev/null 2>&1 || sgrc=$?
+    [ "$sgrc" -eq 1 ] && toks+=("satgate")   # 1=WEAK (delta-cancels legit tie)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything

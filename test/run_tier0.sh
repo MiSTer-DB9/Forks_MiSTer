@@ -120,6 +120,29 @@ case "$csl_rc" in
   2) note "skip coresv_lint  (${csl_out##*: }; <core>.sv unresolvable)" ;;
   *) note "FAIL coresv_lint"; printf '%s\n' "$csl_out" | sed 's/^/    /'; fail=1 ;;
 esac
+# Fork-marker nesting/balance on the re-ported golden (SNES dc15e64 class:
+# orphan/wrong-family/unclosed markers step6 #4's count cannot see).
+mn_rc=0
+mn_out="$(python3 "$HERE/lib/marker_nesting_check.py" "$DST" "$CORE_SV" 2>&1)" || mn_rc=$?
+case "$mn_rc" in
+  0) note "ok   marker_nest  ${mn_out##*  }" ;;
+  2) note "skip marker_nest  (<core>.sv unresolvable)" ;;
+  *) note "FAIL marker_nest"; printf '%s\n' "$mn_out" | sed 's/^/    /'; fail=1 ;;
+esac
+# ||/&& bare-literal precedence over the golden's whole .v/.sv tree
+# (3a94b0a constant-true-arm class).
+vp_rc=0
+vp_out="$(python3 "$HERE/lib/verilog_precedence_check.py" "$DST" 2>&1)" || vp_rc=$?
+case "$vp_rc" in
+  0) note "ok   vprec  ${vp_out##*  }" ;;
+  2) note "skip vprec  (no .v/.sv)" ;;
+  *) note "FAIL vprec"; printf '%s\n' "$vp_out" | sed 's/^/    /'; fail=1 ;;
+esac
+# saturn_unlocked AND-gate -- ADVISORY ONLY (SMS golden wires the real
+# signal -> PASS; a tied test core would be WEAK, which is legit and only
+# delta-gated in merge_validate, so Tier-0 never fails on it).
+sg_out="$(python3 "$HERE/lib/saturn_gate_check.py" "$DST" "$CORE_SV" 2>&1)" || true
+note "info saturn_gate  $(printf '%s\n' "$sg_out" | sed -n 's/^  satgate: //p')"
 run_audit hps_io_width      "$HERE/lib/audit_hps_io_width.sh"
 run_audit status_collisions "$HERE/lib/audit_status_collisions.sh"
 run_audit gate_e2e          "$HERE/test_gate_e2e.sh"
