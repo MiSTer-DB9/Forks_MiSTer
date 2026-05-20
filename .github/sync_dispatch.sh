@@ -3,9 +3,15 @@
 # Usage: sync_dispatch.sh --stable | --unstable
 #
 # --stable:   polls upstream release commits per SYNCING_FORKS, dispatches
-#             sync_release.yml when the fork is behind.
+#             sync_release.yml when the fork is behind. sync_release.sh inside
+#             that workflow then POSTs to the per-fork build workflow
+#             (release.yml for FPGA forks, release_make.yml for make forks
+#             like Main_MiSTer; selected via the <<RELEASE_WORKFLOW>>
+#             placeholder substituted by setup_cicd.sh).
 # --unstable: polls upstream HEAD per UNSTABLE_FORKS, dispatches
-#             unstable_release.yml when ahead of last_unstable_sha.
+#             unstable_release.yml (FPGA forks) or unstable_release_make.yml
+#             (make forks) when ahead of last_unstable_sha. The per-fork
+#             override picks up COMPILATION_INPUT from Forks.ini at xargs feed.
 #
 # Per-fork dispatch is independent (own clones, own dispatch POST) so the
 # fanout uses xargs -P (same pattern as setup_cicd.sh).
@@ -74,7 +80,13 @@ _claim_dispatch() {
 # Shared: POST workflow_dispatch to the fork repo.
 _dispatch() {
     local fork_name="$1" owner="$2" name="$3" main_branch="$4"
-    local url="https://api.github.com/repos/${owner}/${name}/actions/workflows/${WORKFLOW_FILE}/dispatches"
+    # Per-fork override: unstable channel forks built via make (Main_MiSTer)
+    # ship unstable_release_make.yml instead of unstable_release.yml. Stable
+    # channel uses the same sync_release.yml regardless (it's the merge bot;
+    # the build workflow it then dispatches via sync_release.sh's curl POST is
+    # picked there via the <<RELEASE_WORKFLOW>> placeholder).
+    local workflow="${WORKFLOW_FILE_OVERRIDE:-${WORKFLOW_FILE}}"
+    local url="https://api.github.com/repos/${owner}/${name}/actions/workflows/${workflow}/dispatches"
     echo "[${fork_name}] Sending sync request: POST ${url} ref=${main_branch}"
     retry -- curl --fail-with-body --retry 3 --retry-delay 10 --retry-all-errors \
         --retry-connrefused --retry-max-time 120 --max-time 60 -X POST \
@@ -262,8 +274,10 @@ for key in ("last_unstable_sha", "last_failed_sha"):
 }
 
 # Entry point called by xargs for each fork.
-# All 7 positional args are always passed; unstable mode ignores CORE_LIST and
-# UPSTREAM_CORE_NAME (empty strings).
+# All 8 positional args are always passed; unstable mode ignores CORE_LIST and
+# UPSTREAM_CORE_NAME (empty strings). COMPILATION_INPUT (arg 8) is used in
+# unstable mode to pick unstable_release_make.yml for make forks (Main_MiSTer)
+# in lieu of the FPGA channel's unstable_release.yml.
 check_and_dispatch() {
     local fork_name="$1"
     local CORE_LIST="$2"
@@ -272,11 +286,18 @@ check_and_dispatch() {
     local MAIN_BRANCH="$5"
     local UPSTREAM_BRANCH="$6"
     local UPSTREAM_CORE_NAME="$7"
+    local COMPILATION_INPUT="$8"
 
     if [[ -z "${UPSTREAM_REPO}" ]]; then
         echo "[${fork_name}] no UPSTREAM_REPO — skipping (fork-only core)"
         return 0
     fi
+
+    local WORKFLOW_FILE_OVERRIDE=""
+    if [[ "${MODE}" == "--unstable" && "${COMPILATION_INPUT%% *}" == "make" ]]; then
+        WORKFLOW_FILE_OVERRIDE="unstable_release_make.yml"
+    fi
+    export WORKFLOW_FILE_OVERRIDE
 
     local OWNER NAME
     _parse_fork_url "${fork_name}" "${FORK_REPO}" || return 1
@@ -330,14 +351,15 @@ else
     # the xargs children.
     for fork_name in ${Forks[${FORK_LIST_KEY}]}; do
         declare -n _fd="$fork_name"
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
             "$fork_name" \
             "${_fd[release_core_name]:-}" \
             "${_fd[upstream_repo]:-}" \
             "${_fd[fork_repo]:-}" \
             "${_fd[main_branch]:-}" \
             "${_fd[upstream_branch]:-${_fd[main_branch]:-}}" \
-            "${_fd[upstream_core_name]:-${_fd[release_core_name]:-}}"
+            "${_fd[upstream_core_name]:-${_fd[release_core_name]:-}}" \
+            "${_fd[compilation_input]:-}"
         unset -n _fd
     done > "${RESULTS_DIR}/forks.nul"
 
@@ -351,14 +373,14 @@ else
 
     echo "Syncing ${LABEL} START! (PARALLEL_JOBS=${PARALLEL_JOBS:-16})"
 
-    # shellcheck disable=SC2016 # $1..$7 inside the heredoc references xargs subshell args
-    xargs -0 -n 7 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
+    # shellcheck disable=SC2016 # $1..$8 inside the heredoc references xargs subshell args
+    xargs -0 -n 8 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
         bash -c '
             set -uo pipefail
             SAFE_NAME=$(printf "%s" "$1" | tr -c "[:alnum:]._-" "_")
             LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
             {
-                if ! check_and_dispatch "$1" "$2" "$3" "$4" "$5" "$6" "$7"; then
+                if ! check_and_dispatch "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"; then
                     echo "FORK FAILED: $1" >&2
                     printf "%s\n" "$1" > "${RESULTS_DIR}/${SAFE_NAME}.fail"
                 fi

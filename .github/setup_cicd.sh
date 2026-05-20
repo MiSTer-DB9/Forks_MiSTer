@@ -18,9 +18,11 @@ setup_cicd_on_fork() {
     local FORK_REPO="$3"
     local MAIN_BRANCH="$4"
     local UPSTREAM_BRANCH="$5"
-    # Positional slot kept so the xargs arg map stays aligned; only Main_DB9's
-    # separate release_v2 pipeline still consumes QUARTUS_IMAGE — it is no
-    # longer templated into the FPGA workflows (native Quartus Standard only).
+    # Positional slot kept so the xargs arg map stays aligned. No consumer
+    # left: FPGA forks build with native Quartus Standard (detect_quartus_version.sh),
+    # the make channel (Main_MiSTer) installs the Arm GNU Toolchain directly
+    # from developer.arm.com (install_gcc_arm.sh). Forks.ini sections may drop
+    # the QUARTUS_IMAGE key entirely.
     # shellcheck disable=SC2034
     local QUARTUS_IMAGE="$6"
     local COMPILATION_INPUT="$7"
@@ -104,6 +106,47 @@ setup_cicd_on_fork() {
         -e "s%#<<EXTRA_SOURCE_GLOBS>>%${EXTRA_SOURCE_GLOBS}%g" \
         ${TEMP_DIR}/.github/compute_source_hash.sh
 
+    # Per-channel template selection. Each fork ships exactly one Release +
+    # one Unstable Release workflow; the unused pair (and its build-leg
+    # helpers) is pruned so `on: push` doesn't fire twice and the fork
+    # doesn't carry dead code. Channel-agnostic helpers (preflight_skip.sh,
+    # derive_provenance.sh, release_publish.sh, unstable_*) stay for both.
+    local RELEASE_WORKFLOW UNSTABLE_WORKFLOW
+    local -a DROP_WORKFLOWS DROP_FILES DROP_DIRS
+    if [[ "${COMPILATION_INPUT%% *}" == "make" ]]; then
+        RELEASE_WORKFLOW="release_make.yml"
+        UNSTABLE_WORKFLOW="unstable_release_make.yml"
+        DROP_WORKFLOWS=(release.yml unstable_release.yml)
+        DROP_FILES=(
+            release_build.sh
+            unstable_build.sh
+            quartus_build.sh
+            detect_quartus_image.sh
+            detect_quartus_version.sh
+            materialize_quartus_license.sh
+            provision_quartus_native.sh
+            prune_quartus_tree.sh
+            install_oras.sh
+            emit_matrix.sh
+        )
+        DROP_DIRS=(actions)
+    else
+        RELEASE_WORKFLOW="release.yml"
+        UNSTABLE_WORKFLOW="unstable_release.yml"
+        DROP_WORKFLOWS=(release_make.yml unstable_release_make.yml)
+        DROP_FILES=(install_gcc_arm.sh make_build.sh)
+        DROP_DIRS=()
+    fi
+    for _f in "${DROP_WORKFLOWS[@]}"; do
+        rm -f "${TEMP_DIR}/.github/workflows/${_f}"
+    done
+    for _f in "${DROP_FILES[@]}"; do
+        rm -f "${TEMP_DIR}/.github/${_f}"
+    done
+    for _d in "${DROP_DIRS[@]}"; do
+        rm -rf "${TEMP_DIR}/.github/${_d}"
+    done
+
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<UPSTREAM_CORE_NAME>>%${UPSTREAM_CORE_NAME}%g" \
@@ -112,14 +155,15 @@ setup_cicd_on_fork() {
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
+        -e "s%<<RELEASE_WORKFLOW>>%${RELEASE_WORKFLOW}%g" \
         ${TEMP_DIR}/.github/sync_release.sh
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         ${TEMP_DIR}/.github/workflows/sync_release.yml
-    # unstable channel templating. unstable_build.sh + emit_matrix.sh carry no
-    # placeholder (argv-driven) so they are NOT sed'd — same contract as
-    # quartus_build.sh / retry.sh.
+    # unstable channel templating. unstable_build.sh / make_build.sh /
+    # emit_matrix.sh carry no placeholder (argv-driven) so they are NOT sed'd —
+    # same contract as quartus_build.sh / retry.sh.
     sed -i \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         ${TEMP_DIR}/.github/unstable_merge.sh
@@ -132,9 +176,11 @@ setup_cicd_on_fork() {
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
         ${TEMP_DIR}/.github/unstable_preflight.sh
-    # The build matrix is zipped from RELEASE_CORE_NAME/COMPILATION_INPUT/
-    # COMPILATION_OUTPUT by emit_matrix.sh in the preflight job, so the
-    # workflow needs all three lists (plus the per-leg Quartus selectors).
+    # The build matrix (Quartus channel only) is zipped from
+    # RELEASE_CORE_NAME / COMPILATION_INPUT / COMPILATION_OUTPUT by
+    # emit_matrix.sh in the preflight job; the make channel has no matrix.
+    # The same placeholders work for both templates (only the Quartus channel
+    # uses the QUARTUS_* ones; sed on the make template just no-ops on those).
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
@@ -142,10 +188,11 @@ setup_cicd_on_fork() {
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         -e "s%<<QUARTUS_NATIVE>>%${QUARTUS_NATIVE}%g" \
         -e "s%<<QUARTUS_INSTALL_REPO>>%${QUARTUS_INSTALL_REPO}%g" \
-        ${TEMP_DIR}/.github/workflows/unstable_release.yml
+        ${TEMP_DIR}/.github/workflows/${UNSTABLE_WORKFLOW}
 
-    # stable channel templating. release_build.sh is argv-driven (NOT sed'd);
-    # only release_publish.sh needs CORE_NAME[0] title + MAIN_BRANCH prefix.
+    # stable channel templating. release_build.sh / make_build.sh are
+    # argv-driven (NOT sed'd); only release_publish.sh needs CORE_NAME[0]
+    # title + MAIN_BRANCH prefix.
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
@@ -163,7 +210,7 @@ setup_cicd_on_fork() {
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
-        ${TEMP_DIR}/.github/workflows/release.yml
+        ${TEMP_DIR}/.github/workflows/${RELEASE_WORKFLOW}
 
     DID_COMMIT=0
 
@@ -249,9 +296,9 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     # Group siblings share fork_repo|main_branch → must agree on upstream_branch;
     # primary wins (same rule as UPSTREAM_REPO above).
     _UPSTREAM_BRANCH="${_primary[upstream_branch]:-${_primary[main_branch]}}"
-    # Retained only for Main_DB9's separate release_v2 pipeline (gcc-arm
-    # cross-compile via `make`); no longer templated into the FPGA workflows
-    # (they all use native Quartus Standard now). Kept as inert arg-6 plumbing.
+    # Inert arg-6 plumbing. FPGA forks: native Quartus Standard. Make forks
+    # (Main_MiSTer): install_gcc_arm.sh pulls the Arm GNU Toolchain directly.
+    # Forks.ini sections may drop the QUARTUS_IMAGE key entirely.
     _QUARTUS_IMAGE="${_primary[quartus_image]:-}"
     # Native Quartus Standard version selector (per-section, optional).
     # Defaults to "auto" → detect_quartus_version.sh parses the .qsf; a

@@ -1,0 +1,117 @@
+name: Unstable Release
+
+# unstable channel (make path): merge upstream HEAD on each tick, build with
+# the upstream-pinned Arm GNU Toolchain 10.2-2020.11, ship to the shared
+# `unstable-builds` prerelease assets (last 7 retained for rollback).
+# Parallels unstable_release.yml one-for-one — same `[${MAIN_BRANCH}]` release
+# body stanza shape, same source-hash skip path — but the build job runs
+# `make` instead of Quartus.
+concurrency:
+  group: unstable-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.preflight.outputs.skip }}
+      merge_skip: ${{ steps.merge.outputs.skip }}
+      build_sha: ${{ steps.merge.outputs.build_sha }}
+      upstream_sha: ${{ steps.merge.outputs.upstream_sha }}
+      master_sha: ${{ steps.merge.outputs.master_sha }}
+      source_hash: ${{ steps.merge.outputs.source_hash }}
+      timestamp: ${{ steps.merge.outputs.timestamp }}
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+
+    - name: Pre-flight skip check
+      id: preflight
+      run: ./.github/unstable_preflight.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Merge upstream HEAD (once, pre fan-out)
+      if: steps.preflight.outputs.skip != 'true'
+      id: merge
+      run: ./.github/unstable_merge.sh <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1
+
+    - name: Cache Arm GNU Toolchain
+      id: arm_cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/gcc-arm
+        key: gcc-arm-10.2-2020.11
+
+    - name: Install Arm GNU Toolchain
+      id: arm
+      run: |
+        bin_dir=$(./.github/install_gcc_arm.sh "${HOME}/.cache/gcc-arm")
+        echo "${bin_dir}" >> "$GITHUB_PATH"
+        echo "bin=${bin_dir}" >> "$GITHUB_OUTPUT"
+
+    # See release_make.yml: ubuntu-latest already ships build-essential, and
+    # Main_MiSTer's link uses the committed ARM .so files under lib/.
+
+    - name: Build unstable binary
+      run: ./.github/make_build.sh UNSTABLE '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>' '${{ needs.preflight.outputs.timestamp }}' '${{ needs.preflight.outputs.upstream_sha }}' -- <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: rbf-<<RELEASE_CORE_NAME>>
+        path: dist/
+        if-no-files-found: error
+
+  publish:
+    needs: [preflight, build]
+    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1
+
+    - name: Download built binary
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      continue-on-error: true
+      with:
+        pattern: rbf-*
+        path: dist
+        merge-multiple: true
+
+    - name: Publish unstable release
+      run: ./.github/unstable_publish.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        UPSTREAM_SHA: ${{ needs.preflight.outputs.upstream_sha }}
+        MASTER_SHA: ${{ needs.preflight.outputs.master_sha }}
+        BRANCH_SHA: ${{ needs.preflight.outputs.build_sha }}
+        SOURCE_HASH: ${{ needs.preflight.outputs.source_hash }}
+        TIMESTAMP: ${{ needs.preflight.outputs.timestamp }}

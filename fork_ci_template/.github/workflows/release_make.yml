@@ -1,0 +1,163 @@
+name: Release
+
+# stable channel (make path): build fork HEAD with the upstream-pinned Arm
+# GNU Toolchain 10.2-2020.11, publish to a per-commit immutable tag
+# `stable/<MAIN_BRANCH>/<YYYYMMDD>-<sha>` with one GitHub Release on top.
+# Parallels the FPGA channel (release.yml) one-for-one — same tag prefix,
+# same release-body provenance keys (so sync_dispatch.sh's fast path and
+# Distribution_MiSTer's _fetch_one_stable see the same shape) — but the
+# build job runs `make` instead of Quartus and there is no per-core matrix
+# (Main_MiSTer is a single binary per fork).
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - <<MAIN_BRANCH>>
+  workflow_dispatch:
+    inputs:
+      forced:
+        description: "Bypass source-hash skip + BOT-commit skip"
+        required: false
+        default: false
+        type: boolean
+      upstream_release_sha:
+        description: "Upstream release commit SHA (from sync_release)"
+        required: false
+        default: ''
+      upstream_head_at_sync:
+        description: "Upstream HEAD at time of sync (from sync_release)"
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # gh release create / upload / delete-asset
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.preflight.outputs.skip }}
+      source_hash: ${{ steps.preflight.outputs.source_hash }}
+      build_sha: ${{ steps.meta.outputs.build_sha }}
+      date_stamp: ${{ steps.meta.outputs.date_stamp }}
+      timestamp: ${{ steps.meta.outputs.timestamp }}
+      derived_upstream_release_sha: ${{ steps.derive.outputs.derived_upstream_release_sha }}
+      derived_upstream_head_at_sync: ${{ steps.derive.outputs.derived_upstream_head_at_sync }}
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+
+    - name: Pre-flight skip check
+      id: preflight
+      run: ./.github/preflight_skip.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCED: ${{ github.event.inputs.forced }}
+
+    # Pin the build SHA (HEAD must not drift between preflight and build jobs)
+    # and stamp the per-tag date/time. No matrix: the make path is single-leg.
+    - name: Resolve build SHA + stamps
+      if: steps.preflight.outputs.skip != 'true'
+      id: meta
+      run: |
+        echo "build_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "date_stamp=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+        echo "timestamp=$(date -u +%Y%m%d_%H%M)" >> "$GITHUB_OUTPUT"
+
+    # Same git-derived upstream provenance fallback the FPGA channel uses.
+    - name: Derive upstream provenance (fallback)
+      if: steps.preflight.outputs.skip != 'true'
+      id: derive
+      run: ./.github/derive_provenance.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        MAIN_BRANCH: <<MAIN_BRANCH>>
+        UPSTREAM_REPO: <<UPSTREAM_REPO>>
+        UPSTREAM_BRANCH: <<UPSTREAM_BRANCH>>
+        BUILD_SHA: ${{ steps.meta.outputs.build_sha }}
+
+  build:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1   # pinned SHA, tree only
+
+    # Cache the Arm GNU Toolchain 10.2-2020.11 install dir so the ~140 MB
+    # download from developer.arm.com only happens on a cache miss. Pinned to
+    # the toolchain version string — the day Main_MiSTer's upstream bumps the
+    # compiler, bump ARM_GCC_VERSION in install_gcc_arm.sh and the cache key
+    # rotates automatically.
+    - name: Cache Arm GNU Toolchain
+      id: arm_cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/gcc-arm
+        key: gcc-arm-10.2-2020.11
+
+    - name: Install Arm GNU Toolchain
+      id: arm
+      run: |
+        bin_dir=$(./.github/install_gcc_arm.sh "${HOME}/.cache/gcc-arm")
+        echo "${bin_dir}" >> "$GITHUB_PATH"
+        echo "bin=${bin_dir}" >> "$GITHUB_OUTPUT"
+
+    # No apt step needed: ubuntu-latest ships build-essential preinstalled,
+    # and Main_MiSTer's ARM-cross link pulls libImlib2 / libbluetooth / libpng
+    # / freetype / libudev / libz / libbz2 directly from the committed ARM
+    # .so files under lib/imlib2/ and lib/bluetooth/. Host-side dev headers
+    # are not consulted.
+
+    - name: Build stable binary
+      run: ./.github/make_build.sh STABLE '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>' '${{ needs.preflight.outputs.date_stamp }}' '${{ needs.preflight.outputs.build_sha }}' -- <<MAINTAINER_EMAILS>>
+      env:
+        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 64 hex chars = 32 bytes. KEEP SECRET.
+        MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: rbf-<<RELEASE_CORE_NAME>>
+        path: dist/
+        if-no-files-found: error
+
+  publish:
+    needs: [preflight, build]
+    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ needs.preflight.outputs.build_sha }}
+        fetch-depth: 1
+
+    - name: Download built binary
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      # Zero artifacts (build failed) → empty dist/ → release_publish.sh no-ops.
+      continue-on-error: true
+      with:
+        pattern: rbf-*
+        path: dist
+        merge-multiple: true
+
+    - name: Publish stable release
+      run: ./.github/release_publish.sh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        BUILD_SHA: ${{ needs.preflight.outputs.build_sha }}
+        SOURCE_HASH: ${{ needs.preflight.outputs.source_hash }}
+        DATE_STAMP: ${{ needs.preflight.outputs.date_stamp }}
+        TIMESTAMP: ${{ needs.preflight.outputs.timestamp }}
+        UPSTREAM_RELEASE_SHA: ${{ github.event.inputs.upstream_release_sha }}
+        UPSTREAM_HEAD_AT_SYNC: ${{ github.event.inputs.upstream_head_at_sync }}
+        DERIVED_UPSTREAM_RELEASE_SHA: ${{ needs.preflight.outputs.derived_upstream_release_sha }}
+        DERIVED_UPSTREAM_HEAD_AT_SYNC: ${{ needs.preflight.outputs.derived_upstream_head_at_sync }}

@@ -65,9 +65,12 @@ jobs:
         FORCED: ${{ github.event.inputs.forced }}
 
     # Pin the build SHA (HEAD must not drift between parallel legs) and emit
-    # the per-core build matrix from the templated lists. `skip_quartus=true`
-    # for a non-Quartus section (COMPILATION_INPUT=make, e.g. Main_DB9's
-    # separate release_v2 pipeline) so build/publish stay inert no-ops there.
+    # the per-core build matrix from the templated lists. The `make` short
+    # circuit below is a defence-in-depth safety net: setup_cicd.sh routes
+    # COMPILATION_INPUT=make sections (Main_MiSTer) to release_make.yml
+    # instead, so this template never lands on a make fork. If it does (stale
+    # fork from a pre-make-channel run, or a setup_cicd.sh dispatcher bug),
+    # skip cleanly rather than running Quartus against C/C++ sources.
     - name: Resolve build SHA + matrix
       if: steps.preflight.outputs.skip != 'true'
       id: meta
@@ -75,7 +78,7 @@ jobs:
         first_input=$(echo '<<COMPILATION_INPUT>>' | awk '{print $1}')
         if [ "${first_input}" = "make" ]; then
           echo "skip_quartus=true" >> "$GITHUB_OUTPUT"
-          echo "Non-Quartus section (make) — skipping native Quartus build."
+          echo "::warning::Quartus template landed on a make fork — release_make.yml should be running instead."
           exit 0
         fi
         echo "skip_quartus=false" >> "$GITHUB_OUTPUT"
