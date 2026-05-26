@@ -904,6 +904,50 @@ def upgrade_core_emu(core_dir: Path) -> list[str]:
     return notes
 
 
+_AUDIO_OUT_RE = re.compile(
+    r'^(?P<indent>[ \t]*)assign[ \t]+AUDIO_SPDIF[ \t]*=[ \t]*av_dis[ \t]*\?[ \t]*1\'bZ[ \t]*:[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_LRCLK[ \t]*:[ \t]*spdif;[^\n]*\n'
+    r'(?P=indent)assign[ \t]+AUDIO_R[ \t]+=[ \t]*av_dis[ \t]*\?[ \t]*1\'bZ[ \t]*:[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_I2S[ \t]+:[ \t]*analog_r;[^\n]*\n'
+    r'(?P=indent)assign[ \t]+AUDIO_L[ \t]+=[ \t]*av_dis[ \t]*\?[ \t]*1\'bZ[ \t]*:[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_SCLK[ \t]+:[ \t]*analog_l;[^\n]*\n',
+    flags=re.MULTILINE,
+)
+
+
+def upgrade_sys_top_audio_mode(path: Path) -> list[str]:
+    """Inject the AUDIO_MODE mister.ini override on the three SW[0]-gated
+    audio output assigns. Replaces the `(SW[0] | mcp_en)` selector with
+    `audio_route_i2s`, a wire derived from `cfg[15:14]`:
+
+        00 -> auto: original `(SW[0] | mcp_en)` behaviour
+        01 -> force I2S on analog jacks
+        10 -> force DAC analog + SPDIF on analog jacks
+        11 -> reserved (falls back to force-SPDIF since audio_mode_force[0]=1)
+
+    Idempotent: skipped if `audio_mode_force` is already present.
+    """
+    if not path.exists():
+        return [f'{path}: missing']
+    text, nl = read_text(path)
+    if 'audio_mode_force' in text:
+        return []
+    m = _AUDIO_OUT_RE.search(text)
+    if not m:
+        return [f'{path}: AUDIO_SPDIF/R/L assigns not found — AUDIO_MODE patch skipped']
+    indent = m.group('indent')
+    replacement = (
+        f'{indent}// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0]\n'
+        f'{indent}wire [1:0] audio_mode_force = cfg[15:14];\n'
+        f'{indent}wire       audio_route_i2s  = (audio_mode_force == 2\'b00) ? (SW[0] | mcp_en) : audio_mode_force[0];\n'
+        f'{indent}// [MiSTer-DB9 END]\n'
+        f'\n'
+        f'{indent}assign AUDIO_SPDIF = av_dis ? 1\'bZ : audio_route_i2s ? HDMI_LRCLK : spdif;\n'
+        f'{indent}assign AUDIO_R     = av_dis ? 1\'bZ : audio_route_i2s ? HDMI_I2S   : analog_r;\n'
+        f'{indent}assign AUDIO_L     = av_dis ? 1\'bZ : audio_route_i2s ? HDMI_SCLK  : analog_l;\n'
+    )
+    text = text[:m.start()] + replacement + text[m.end():]
+    write_text(path, text, nl)
+    return [f'{path}: injected AUDIO_MODE override on AUDIO_SPDIF/R/L']
+
+
 def resolve_hps_io(sys_dir: Path) -> Path:
     """Pre-SV-rename forks ship `sys/hps_io.v`; post-rename ones ship
     `sys/hps_io.sv`. The upgrader's regex transforms (saturn_unlocked port,
@@ -930,6 +974,8 @@ def main(argv: list[str]) -> int:
     for note in upgrade_hps_io(hps_io):
         print(f'  {note}')
     for note in upgrade_sys_top(d / 'sys' / 'sys_top.v'):
+        print(f'  {note}')
+    for note in upgrade_sys_top_audio_mode(d / 'sys' / 'sys_top.v'):
         print(f'  {note}')
     # Pass 2: wrap legacy DB9 additions with [MiSTer-DB9 BEGIN/END] markers.
     for note in wrap_hps_io_markers(hps_io):
