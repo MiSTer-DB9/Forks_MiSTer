@@ -57,6 +57,11 @@ wire         joy_2p          = status[125];
 // SNAC cores: replace 1'b0 with the core's SNAC enable expression so SNAC
 // preempts the joydb wrapper on shared USER_IO pins. Default 1'b0 is no-op.
 wire         snac_active     = 1'b0;
+// MT32-pi cores on primary USER_IO: replace 1'b0 with the core's MT32-active
+// expression (e.g. `mt32_use` under `ifndef SECOND_MT32`, `~mt32_disable` for
+// TRS-80's inverted polarity). Suppresses the OSD-open autodetect probe so it
+// doesn't read the RPi's I2C master traffic as a ghost Saturn signature.
+wire         mt32_primary_active = 1'b0;
 wire   [1:0] joy_type        = snac_active ? 2'd0 : joy_type_raw;
 wire         joy_db9md_en    = (joy_type == 2'd2);
 wire         joy_db15_en     = (joy_type == 2'd3);
@@ -80,6 +85,9 @@ wire  [15:0] joy_raw_payload;
 joydb joydb (
   .clk             ( CLK_JOY         ),
   .USER_IN         ( USER_IN         ),
+  .OSD_STATUS          ( OSD_STATUS          ),
+  .snac_active         ( snac_active         ),
+  .mt32_primary_active ( mt32_primary_active ),
   .joy_type        ( joy_type        ),
   .joy_2p          ( joy_2p          ),
   .saturn_unlocked ( saturn_unlocked ),
@@ -137,6 +145,58 @@ SNAC_ACTIVE_DEFAULT_LINE_RE = re.compile(
     r"^wire[ \t]+snac_active[ \t]+=[ \t]+1'b0;",
     flags=re.MULTILINE,
 )
+MT32_PRIMARY_ACTIVE_RE = re.compile(
+    r'^[ \t]*wire[ \t]+mt32_primary_active[ \t]*=[ \t]*([^;]+?)[ \t]*;',
+    flags=re.MULTILINE,
+)
+MT32_PRIMARY_ACTIVE_DEFAULT_LINE_RE = re.compile(
+    r"^wire[ \t]+mt32_primary_active[ \t]+=[ \t]+1'b0;",
+    flags=re.MULTILINE,
+)
+
+# Per the fork hazard notes, every MT32-capable core needs
+# mt32_primary_active wired to its MT32-active expression so the OSD-open
+# autodetect probe is suppressed while the RPi clocks SCL/SDA on USER_IO.
+# Detection keys off whichever MT32 signals the core's <core>.sv declares.
+MT32_DECL_DEFAULT     = "wire         mt32_primary_active = 1'b0;"
+MT32_DECL_TRS80       = "wire         mt32_primary_active = ~mt32_disable;"
+MT32_DECL_BARE_USE    = "wire         mt32_primary_active = mt32_use;"
+MT32_DECL_IFDEF_SPLIT = (
+    "`ifdef SECOND_MT32\n"
+    "wire         mt32_primary_active = mt32_on_primary & mt32_use;\n"
+    "`else\n"
+    "wire         mt32_primary_active = mt32_use;\n"
+    "`endif"
+)
+
+
+def detect_mt32_primary_active_decl(text: str) -> str | None:
+    """Return the canonical `wire mt32_primary_active = ...;` block (possibly
+    spanning an `ifdef SECOND_MT32` split) matching the MT32-pi pattern in
+    `text`. Returns None for cores with no MT32-pi support so the default
+    1'b0 stays.
+
+    Mapping per `the fork hazard notes`:
+      mt32_on_primary + mt32_use         -> ifdef SECOND_MT32 split (ao486 / Minimig-AGA / AtariST / X68000)
+      mt32_disable (no mt32_on_primary)  -> ~mt32_disable           (TRS-80, even when mt32_use is also declared)
+      mt32_use only                      -> mt32_use
+    Comments are stripped before matching — the WRAPPER_BLOCK header
+    mentions `mt32_disable` in an explanatory line that would otherwise
+    false-positive every ported core.
+    """
+    stripped = re.sub(r'//[^\n]*',   '', text)
+    stripped = re.sub(r'/\*.*?\*/',  '', stripped, flags=re.DOTALL)
+    has_disable = bool(re.search(r'\bmt32_disable\b',    stripped))
+    has_use     = bool(re.search(r'\bmt32_use\b',        stripped))
+    has_primary = bool(re.search(r'\bmt32_on_primary\b', stripped))
+
+    if has_primary and has_use:
+        return MT32_DECL_IFDEF_SPLIT
+    if has_disable:
+        return MT32_DECL_TRS80
+    if has_use:
+        return MT32_DECL_BARE_USE
+    return None
 
 
 # Verilog zero literals (case-insensitive base spec). The porter writes lowercase
@@ -144,9 +204,8 @@ SNAC_ACTIVE_DEFAULT_LINE_RE = re.compile(
 _VERILOG_ZERO_LITERALS = frozenset({"0", "1'b0", "1'd0", "1'h0"})
 
 
-def extract_snac_active_rhs(old_span: str) -> str | None:
-    """Return non-default RHS of `wire snac_active = <rhs>;` in old_span, else None."""
-    m = SNAC_ACTIVE_RE.search(old_span)
+def _extract_wire_rhs(regex: "re.Pattern[str]", old_span: str) -> str | None:
+    m = regex.search(old_span)
     if not m:
         return None
     rhs = m.group(1).strip()
@@ -155,18 +214,43 @@ def extract_snac_active_rhs(old_span: str) -> str | None:
     return rhs
 
 
-def _wrapper_with_snac_rhs(rhs: str | None) -> str:
-    """Return WRAPPER_BLOCK with the `wire snac_active = ...;` RHS substituted."""
-    if rhs is None:
-        return WRAPPER_BLOCK
-    block, n = SNAC_ACTIVE_DEFAULT_LINE_RE.subn(
-        f"wire         snac_active     = {rhs};",
-        WRAPPER_BLOCK,
-        count=1,
-    )
-    # Loud-fail rather than silently emit the default RHS if WRAPPER_BLOCK whitespace
-    # ever drifts past SNAC_ACTIVE_DEFAULT_LINE_RE.
-    assert n == 1, "SNAC_ACTIVE_DEFAULT_LINE_RE no longer matches WRAPPER_BLOCK"
+def extract_snac_active_rhs(old_span: str) -> str | None:
+    return _extract_wire_rhs(SNAC_ACTIVE_RE, old_span)
+
+
+def extract_mt32_primary_active_rhs(old_span: str) -> str | None:
+    return _extract_wire_rhs(MT32_PRIMARY_ACTIVE_RE, old_span)
+
+
+def _resolve_mt32_decl(full_text: str, old_span: str | None) -> str | None:
+    """Pick the right `wire mt32_primary_active = ...;` block for this core.
+    Maintainer's hand-edited RHS in old_span (single-line) wins over auto-
+    detect; otherwise scan the whole file for MT32 signals."""
+    if old_span is not None:
+        manual_rhs = extract_mt32_primary_active_rhs(old_span)
+        if manual_rhs is not None:
+            return f"wire         mt32_primary_active = {manual_rhs};"
+    return detect_mt32_primary_active_decl(full_text)
+
+
+def _wrapper_with_custom_rhs(snac_rhs: str | None, mt32_decl: str | None) -> str:
+    block = WRAPPER_BLOCK
+    if snac_rhs is not None:
+        block, n = SNAC_ACTIVE_DEFAULT_LINE_RE.subn(
+            f"wire         snac_active     = {snac_rhs};",
+            block,
+            count=1,
+        )
+        assert n == 1, "SNAC_ACTIVE_DEFAULT_LINE_RE no longer matches WRAPPER_BLOCK"
+    if mt32_decl is not None:
+        # Use a callable to bypass re.sub's backref handling in the replacement
+        # (mt32_decl may contain `\` escapes from `ifdef directives).
+        block, n = MT32_PRIMARY_ACTIVE_DEFAULT_LINE_RE.subn(
+            lambda _m: mt32_decl,
+            block,
+            count=1,
+        )
+        assert n == 1, "MT32_PRIMARY_ACTIVE_DEFAULT_LINE_RE no longer matches WRAPPER_BLOCK"
     return block
 
 
@@ -195,8 +279,9 @@ def replace_joy_flag_block(text: str) -> tuple[str, bool]:
     if end_marker:
         end += end_marker.end()
 
-    rhs = extract_snac_active_rhs(text[start:end])
-    return text[:start] + _wrapper_with_snac_rhs(rhs) + text[end:], True
+    snac_rhs  = extract_snac_active_rhs(text[start:end])
+    mt32_decl = _resolve_mt32_decl(text, text[start:end])
+    return text[:start] + _wrapper_with_custom_rhs(snac_rhs, mt32_decl) + text[end:], True
 
 
 # ---- Step 1b: replace legacy joydbmix wrapper instance ----
@@ -226,8 +311,9 @@ def replace_joydbmix_block(text: str) -> tuple[str, bool]:
     m = JOYDBMIX_BLOCK_RE.search(text)
     if not m:
         return text, False
-    rhs = extract_snac_active_rhs(text[m.start():m.end()])
-    return text[:m.start()] + _wrapper_with_snac_rhs(rhs) + text[m.end():], True
+    snac_rhs  = extract_snac_active_rhs(text[m.start():m.end()])
+    mt32_decl = _resolve_mt32_decl(text, text[m.start():m.end()])
+    return text[:m.start()] + _wrapper_with_custom_rhs(snac_rhs, mt32_decl) + text[m.end():], True
 
 
 # ---- Step 2: strip joydb_1/2 mux block ----
@@ -739,6 +825,132 @@ def strip_wrapper_user_out_assign(text: str) -> tuple[str, bool]:
     return pat.sub('', text, count=1), True
 
 
+# ---- OSD-probe retrofit passes (idempotent) ----
+# Each pass is a no-op when the target line is already present, so re-runs on a
+# fully-upgraded file leave the text untouched.
+
+SNAC_ACTIVE_DECL_FULL_LINE_RE = re.compile(
+    r'^(?P<indent>[ \t]*)wire[ \t]+snac_active[ \t]*=[ \t]*[^;]+;[^\n]*\n',
+    flags=re.MULTILINE,
+)
+JOYDB_INSTANCE_HEAD_RE = re.compile(
+    r'^(?P<indent>[ \t]*)joydb[ \t]+joydb[ \t]*\([ \t]*\n',
+    flags=re.MULTILINE,
+)
+
+
+def add_snac_active_decl(text: str) -> tuple[str, bool]:
+    if SNAC_ACTIVE_RE.search(text):
+        return text, False
+    m = JOYDB_INSTANCE_HEAD_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group('indent')
+    insert = (
+        f"{indent}// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: probe-gating wires\n"
+        f"{indent}// SNAC cores: replace 1'b0 with the core's SNAC enable expression so SNAC\n"
+        f"{indent}// preempts the joydb wrapper on shared USER_IO pins. Default 1'b0 is no-op.\n"
+        f"{indent}wire         snac_active     = 1'b0;\n"
+        f"{indent}// [MiSTer-DB9 END]\n"
+    )
+    return text[:m.start()] + insert + text[m.start():], True
+
+
+def add_mt32_primary_active_decl(text: str) -> tuple[str, bool]:
+    if MT32_PRIMARY_ACTIVE_RE.search(text):
+        return text, False
+    insert_after_snac = SNAC_ACTIVE_DECL_FULL_LINE_RE.search(text)
+    joydb_m = None if insert_after_snac else JOYDB_INSTANCE_HEAD_RE.search(text)
+    if insert_after_snac is None and joydb_m is None:
+        return text, False
+    indent = (insert_after_snac.group('indent') if insert_after_snac
+              else joydb_m.group('indent'))
+    # Auto-detect the MT32 form from signals declared elsewhere in <core>.sv;
+    # default to 1'b0 (no MT32 → probe always allowed) when no pattern matches.
+    decl = detect_mt32_primary_active_decl(text) or MT32_DECL_DEFAULT
+    # Indent `wire` lines; leave preprocessor directives at column 0 to match
+    # MiSTer convention (ao486.sv / AtariST.sv / X68000.sv).
+    decl_indented = '\n'.join(
+        line if (not line or line.startswith('`')) else f"{indent}{line}"
+        for line in decl.split('\n')
+    )
+    insert = (
+        f"{indent}// MT32-pi probe-suppression gate. Auto-detected from MT32 signals declared\n"
+        f"{indent}// elsewhere in this file (mt32_disable / mt32_use / mt32_on_primary). Hand-edit\n"
+        f"{indent}// if the heuristic missed your core's gate expression. Suppresses the OSD-open\n"
+        f"{indent}// autodetect probe so it doesn't read the RPi's I2C master traffic as a ghost\n"
+        f"{indent}// Saturn signature. See the fork hazard notes.\n"
+        f"{decl_indented}\n"
+    )
+    if insert_after_snac:
+        return text[:insert_after_snac.end()] + insert + text[insert_after_snac.end():], True
+    return text[:joydb_m.start()] + insert + text[joydb_m.start():], True
+
+
+_MT32_PRIMARY_ACTIVE_DEFAULT_INDENT_RE = re.compile(
+    r"^(?P<indent>[ \t]*)wire[ \t]+mt32_primary_active[ \t]+=[ \t]+1'b0;[^\n]*",
+    flags=re.MULTILINE,
+)
+
+
+def upgrade_mt32_primary_active_rhs(text: str) -> tuple[str, bool]:
+    """Lift a previously-installed `wire mt32_primary_active = 1'b0;` default
+    to the auto-detected MT32 form. Idempotent: returns (text, False) when
+    either no default-1'b0 line is present (already upgraded or hand-edited)
+    or the file has no MT32-pi pattern (default 1'b0 is correct)."""
+    detected = detect_mt32_primary_active_decl(text)
+    if detected is None:
+        return text, False
+    m = _MT32_PRIMARY_ACTIVE_DEFAULT_INDENT_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group('indent')
+    decl_indented = '\n'.join(
+        line if (not line or line.startswith('`')) else f"{indent}{line}"
+        for line in detected.split('\n')
+    )
+    return text[:m.start()] + decl_indented + text[m.end():], True
+
+
+JOYDB_INSTANCE_BODY_RE = re.compile(
+    r'(?P<head>^[ \t]*joydb[ \t]+joydb[ \t]*\([ \t]*\n)'
+    r'(?P<body>(?:^[ \t]*\.[A-Za-z_]\w*[ \t]*\([^)]*\)[ \t]*,?[ \t]*(?://[^\n]*)?\n)+)'
+    r'(?P<tail>^[ \t]*\)[ \t]*;[^\n]*\n)',
+    flags=re.MULTILINE,
+)
+
+
+def add_joydb_probe_bindings(text: str) -> tuple[str, bool]:
+    m = JOYDB_INSTANCE_BODY_RE.search(text)
+    if not m:
+        return text, False
+    body = m.group('body')
+    if '.OSD_STATUS' in body and '.snac_active' in body and '.mt32_primary_active' in body:
+        return text, False
+    user_in_m = re.search(
+        r'^(?P<indent>[ \t]*)\.USER_IN\b[^\n]*\n', body, flags=re.MULTILINE,
+    )
+    if not user_in_m:
+        return text, False
+    indent = user_in_m.group('indent')
+    new_bindings = (
+        f"{indent}.OSD_STATUS          ( OSD_STATUS          ),\n"
+        f"{indent}.snac_active         ( snac_active         ),\n"
+        f"{indent}.mt32_primary_active ( mt32_primary_active ),\n"
+    )
+    # Drop lines whose port is already bound in the existing body.
+    new_bindings = re.sub(
+        r'^.*\.(OSD_STATUS|snac_active|mt32_primary_active)\b[^\n]*\n',
+        lambda mm: '' if f'.{mm.group(1)}' in body else mm.group(0),
+        new_bindings,
+        flags=re.MULTILINE,
+    )
+    if not new_bindings:
+        return text, False
+    new_body = body[:user_in_m.end()] + new_bindings + body[user_in_m.end():]
+    return text[:m.start('body')] + new_body + text[m.end('body'):], True
+
+
 # ---- Orchestrator ----
 
 def port_core(core_dir: Path) -> list[str]:
@@ -865,6 +1077,22 @@ def port_core(core_dir: Path) -> list[str]:
         text, stripped = strip_wrapper_user_out_assign(text)
         if stripped:
             notes.append(f'{sv.name}: stripped wrapper `assign USER_OUT = USER_OUT_DRIVE;` (SNAC mux drives USER_OUT)')
+
+    # OSD-open autodetect probe retrofit: install snac_active + mt32_primary_active
+    # wire declarations and the three new joydb instance bindings on cores ported
+    # before the probe FSM was added to joydb.sv. Each pass is idempotent.
+    text, ok = add_snac_active_decl(text)
+    if ok:
+        notes.append(f'{sv.name}: added wire snac_active = 1\'b0; default (override per-core for SNAC cores)')
+    text, ok = add_mt32_primary_active_decl(text)
+    if ok:
+        notes.append(f'{sv.name}: added wire mt32_primary_active (auto-detected from MT32 signals; falls back to 1\'b0 default)')
+    text, ok = upgrade_mt32_primary_active_rhs(text)
+    if ok:
+        notes.append(f'{sv.name}: upgraded mt32_primary_active default 1\'b0 to auto-detected MT32 form')
+    text, ok = add_joydb_probe_bindings(text)
+    if ok:
+        notes.append(f'{sv.name}: added OSD-probe bindings (.OSD_STATUS/.snac_active/.mt32_primary_active) to joydb instance')
 
     if text == orig:
         notes.append(f'{sv.name}: no changes')

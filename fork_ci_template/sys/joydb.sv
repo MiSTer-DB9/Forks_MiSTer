@@ -23,6 +23,16 @@
 // Tie saturn_unlocked = 1'b0 in cores whose hps_io.sv does not yet expose
 // it; the module degrades cleanly to DB9MD/DB15-only behavior.
 //
+// OSD-open autodetect probe: while OSD_STATUS is high, runs the same
+// idle → settle → probe → active FSM as Menu_MiSTer (battle-tested in the
+// boot core). Hot-swap of USERIO gamepads mid-OSD re-routes joydb_1 /
+// joy_raw to the new pad WITHOUT requiring USB/keyboard fallback —
+// db9md_absent_cnt drops db9md_ena ~10 ms after the MD-pad signature
+// vanishes, db15_disable masks DB15 ghost outputs on all-low pin states,
+// db15_arm_delay_cnt cools down DB9MD re-detection across the swap window.
+// Suppressed when snac_active or mt32_primary_active drives USER_IO
+// externally.
+//
 // This file is fork-only (does not exist upstream), so it is implicitly
 // MiSTer-DB9. Only [MiSTer-DB9-Pro BEGIN/END] markers appear, to flag the
 // Key-gated sections (Saturn arms in the joystick mux). USER_PP_DRIVE is
@@ -34,6 +44,12 @@ module joydb
 (
     input  logic        clk,            // CLK_JOY (40-50 MHz)
     input  logic [7:0]  USER_IN,
+
+    // Quartus 17.0.2 Standard rejects SV port defaults (LRM 23.2.2.4, Err 10231),
+    // so each <core>.sv must bind these explicitly (porter installs 1'b0 defaults).
+    input  logic        OSD_STATUS,
+    input  logic        snac_active,
+    input  logic        mt32_primary_active,
 
     input  logic [1:0]  joy_type,
     input  logic        joy_2p,
@@ -54,7 +70,8 @@ module joydb
     output logic [15:0] joy_raw
 );
 
-// Mode decode
+wire probe_active = OSD_STATUS & ~snac_active & ~mt32_primary_active;
+
 wire joy_db9md_en  = (joy_type == 2'd2);
 wire joy_db15_en   = (joy_type == 2'd3);
 wire joy_any_en    = |joy_type;
@@ -62,14 +79,36 @@ wire joy_any_en    = |joy_type;
 wire joy_saturn_en = (joy_type == 2'd1);
 // [MiSTer-DB9-Pro END]
 
+// ---- Menu_MiSTer-port autodetect FSM state (active only when probe_active=1) ----
+// States: idle (db15-active waiting on db15_idle) → settle (~10 ms float for
+// IO[0]/IO[1] recovery) → probe (~5 ms Saturn drive) → active (Saturn confirmed,
+// continuous drive). On ~probe_active the whole FSM is held in reset and the
+// user-mode joy_type-driven muxes below take over.
+reg saturn_active = 1'b0;
+reg saturn_probe  = 1'b1;  // boot / OSD-open: first frame is probe
+reg saturn_settle = 1'b0;
+reg db15_disable  = 1'b0;
+reg db9md_ena     = 1'b0;
+reg db9_any_ena   = 1'b0;
+
+wire saturn_mode = saturn_active | saturn_probe;
+wire saturn_any  = saturn_mode | saturn_settle;
+
+// Probe-mode pin gating mirrors Menu_MiSTer:
+// JOY_MDIN reads only during ~saturn_any with DB9MD latched;
+// JOY_DATA reads only during ~saturn_any with DB9MD not latched;
+// JOY_SATURN_IN reads whenever saturn_mode high (probe / active drive).
+wire use_db9md_in  = probe_active ? (~saturn_any & db9md_ena)  : joy_db9md_en;
+wire use_db15_in   = probe_active ? (~saturn_any & ~db9md_ena) : joy_db15_en;
+wire use_saturn_in = probe_active ? saturn_mode                : (joy_saturn_en & saturn_unlocked);
+
 // Pin remap (hardware-fixed)
-wire [5:0] JOY_MDIN = joy_db9md_en ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-wire       JOY_DATA = joy_db15_en  ? USER_IN[5] : 1'b1;
+wire [5:0] JOY_MDIN      = use_db9md_in  ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
+wire       JOY_DATA      = use_db15_in   ? USER_IN[5] : 1'b1;
 // [MiSTer-DB9-Pro BEGIN] - Saturn pin remap
-wire [3:0] JOY_SATURN_IN = joy_saturn_en ? {USER_IN[3],USER_IN[5],USER_IN[0],USER_IN[1]} : '1;
+wire [3:0] JOY_SATURN_IN = use_saturn_in ? {USER_IN[3],USER_IN[5],USER_IN[0],USER_IN[1]} : '1;
 // [MiSTer-DB9-Pro END]
 
-// DB9MD instance
 //----BA 9876543210
 //----MS ZYXCBAUDLR
 wire        JOY_MDSEL, JOY_SPLIT;
@@ -85,7 +124,6 @@ joy_db9md joy_db9md_i (
 wire [15:0] JOYDB9MD_1 = {4'b0, JOYDB9MD_1_raw};
 wire [15:0] JOYDB9MD_2 = {4'b0, JOYDB9MD_2_raw};
 
-// DB15 instance
 //----BA 9876543210
 //----LS FEDCBAUDLR
 wire        JOY_CLK, JOY_LOAD;
@@ -122,47 +160,244 @@ joy_db9saturn joy_db9saturn_i (
 wire [15:0] JOYDBSATURN_SINGLE = JOYDBSATURN_1_VALID ? JOYDBSATURN_1
                                : JOYDBSATURN_2_VALID ? JOYDBSATURN_2
                                                      : 16'h0000;
+wire        JOYDBSATURN_BOTH   = JOYDBSATURN_1_VALID & JOYDBSATURN_2_VALID;
 // [MiSTer-DB9-Pro END]
 
-// Unified joystick mux.
-// [MiSTer-DB9-Pro BEGIN] - Saturn arm AND-gated with saturn_unlocked
-assign joydb_1 = (joy_saturn_en & saturn_unlocked) ? (joy_2p ? JOYDBSATURN_1 : JOYDBSATURN_SINGLE)
-               : joy_db9md_en  ? JOYDB9MD_1
-               : joy_db15_en   ? JOYDB15_1
-               :                 16'h0000;
-assign joydb_2 = (joy_saturn_en & saturn_unlocked) ? JOYDBSATURN_2
-               : joy_db9md_en  ? JOYDB9MD_2
-               : joy_db15_en   ? JOYDB15_2
-               :                 16'h0000;
+// ---- Menu_MiSTer-port FSM body ----
+// Counter widths/values copied from Menu_MiSTer/menu.sv (tuned for 50 MHz clk).
+// At 40 MHz the absent / recovery / arm windows scale to ~12.5 ms — still
+// well within the hot-swap UX budget.
+reg [19:0] saturn_probe_cnt   = 20'd0;
+reg  [1:0] saturn_cycle_cnt   = 2'd0;
+reg [15:0] db9md_lo_cnt       = 16'd0;
+reg [19:0] db9md_absent_cnt   = 20'd0;
+reg [15:0] db15_disable_cnt   = 16'd0;
+reg [19:0] db15_recover_cnt   = 20'd0;
+reg [19:0] db15_arm_delay_cnt = 20'd0;
+localparam [15:0] DB9MD_DEBOUNCE        = 16'd49999;   // ~1 ms @ 50 MHz
+localparam [19:0] DB9MD_ABSENT_DELAY    = 20'd999999;  // ~10 ms
+localparam [15:0] DB15_DISABLE_DEBOUNCE = 16'd49999;   // ~1 ms
+localparam [19:0] DB15_RECOVER_DELAY    = 20'd999999;  // ~10 ms
+localparam [19:0] DB15_ARM_DELAY        = 20'd999999;  // ~10 ms (post-swap mask)
+
+wire db9_status              = db9md_ena ? 1'b1 : USER_IN[7];
+wire db15_idle               = ~(|JOYDB15_1[11:0] | |JOYDB15_2[11:0]);
+wire db9md_detect_low        = ~db9md_ena & ~db9_status;
+wire db9md_debounce_active   = saturn_any | (db15_arm_delay_cnt != 20'd0);
+wire db9md_present_signature = db9md_ena & ~JOY_MDSEL & ~USER_IN[1] & ~USER_IN[2];
+wire db15_disable_pins_low   = ~USER_IN[6] | ~USER_IN[2] | ~USER_IN[3];
+wire db15_disable_armed      = ~saturn_any & ~db9md_ena & ~db9md_detect_low & (db15_arm_delay_cnt == 20'd0);
+
+task automatic reset_db9_debounce;
+    begin
+        db9md_lo_cnt     <= 16'd0;
+        db9md_absent_cnt <= 20'd0;
+        db15_disable_cnt <= 16'd0;
+        db15_recover_cnt <= 20'd0;
+    end
+endtask
+
+always @(posedge clk) begin
+    if (~probe_active) begin
+        // OSD closed / SNAC / MT32-on-primary: hold FSM in reset; user-mode
+        // joy_type-driven muxes drive joydb_1/joydb_2.
+        saturn_active      <= 1'b0;
+        saturn_probe       <= 1'b1;
+        saturn_settle      <= 1'b0;
+        db15_disable       <= 1'b0;
+        db9md_ena          <= 1'b0;
+        db9_any_ena        <= 1'b0;
+        saturn_probe_cnt   <= 20'd0;
+        saturn_cycle_cnt   <= 2'd0;
+        db9md_lo_cnt       <= 16'd0;
+        db9md_absent_cnt   <= 20'd0;
+        db15_disable_cnt   <= 16'd0;
+        db15_recover_cnt   <= 20'd0;
+        db15_arm_delay_cnt <= 20'd0;
+    end
+    else begin
+        if (db15_arm_delay_cnt != 20'd0) db15_arm_delay_cnt <= db15_arm_delay_cnt - 1'd1;
+
+        // DB9MD physical removal: D1=D0=0 signature missing for ~10 ms → drop.
+        if (db9md_ena) begin
+            if (db9md_present_signature) db9md_absent_cnt <= 20'd0;
+            else if (db9md_absent_cnt < DB9MD_ABSENT_DELAY) db9md_absent_cnt <= db9md_absent_cnt + 1'b1;
+            else begin
+                db9md_ena    <= 1'b0;
+                db15_disable <= 1'b0;
+                reset_db9_debounce;
+                db15_arm_delay_cnt <= DB15_ARM_DELAY;
+            end
+        end
+        else db9md_absent_cnt <= 20'd0;
+
+        // DB9MD detection: immediate in idle/DB15 mode, ~1 ms debounce during
+        // Saturn phases and the post-swap recovery window.
+        if (db9md_detect_low) begin
+            if (db9md_debounce_active) begin
+                if (db9md_lo_cnt < DB9MD_DEBOUNCE) db9md_lo_cnt <= db9md_lo_cnt + 1'b1;
+                else                                db9md_ena    <= 1'b1;
+            end
+            else begin
+                db9md_ena <= 1'b1;
+                reset_db9_debounce;
+            end
+        end
+        else db9md_lo_cnt <= 16'd0;
+
+        // DB15 disable latch: all-low pin signature for ~1 ms while in idle/DB15
+        // (suggests Saturn-floating pins) → mask DB15 output until pins clear.
+        if (~db15_disable_armed | ~db15_disable_pins_low) begin
+            db15_disable_cnt <= 16'd0;
+        end
+        else if (!db15_disable) begin
+            if (db15_disable_cnt < DB15_DISABLE_DEBOUNCE) db15_disable_cnt <= db15_disable_cnt + 1'b1;
+            else                                          db15_disable     <= 1'b1;
+        end
+        if (db15_disable & ~saturn_any & ~db9md_ena & ~db15_disable_pins_low) begin
+            if (db15_recover_cnt < DB15_RECOVER_DELAY) db15_recover_cnt <= db15_recover_cnt + 1'b1;
+            else begin
+                db15_disable     <= 1'b0;
+                db15_recover_cnt <= 20'd0;
+            end
+        end
+        else db15_recover_cnt <= 20'd0;
+
+        // DB15/DB9MD active latch: any button-2 press on either port.
+        if (JOYDB9MD_1[2] | JOYDB15_1[2]) db9_any_ena <= 1'b1;
+        if ((~JOYDB9MD_1[2] & JOYDB9MD_2[2]) | JOYDB15_2[2]) db9_any_ena <= 1'b1;
+
+        // Saturn autodetect: idle → settle → probe → settle → ... → active.
+        // saturn_any masks JOY_DATA / JOY_MDIN; saturn_mode drives Saturn pins.
+        if (saturn_active) begin
+            if (~JOYDBSATURN_1_VALID & ~JOYDBSATURN_2_VALID) begin
+                saturn_active      <= 1'b0;
+                db9_any_ena        <= 1'b1;
+                db15_disable       <= 1'b0;
+                db9md_ena          <= 1'b0;
+                reset_db9_debounce;
+                db15_arm_delay_cnt <= DB15_ARM_DELAY;
+            end
+            saturn_probe_cnt <= 20'd0;
+            saturn_settle    <= 1'b0;
+            saturn_cycle_cnt <= 2'd0;
+        end
+        else if (saturn_probe) begin
+            if (JOYDBSATURN_1_VALID | JOYDBSATURN_2_VALID) begin
+                saturn_active    <= 1'b1;
+                saturn_probe     <= 1'b0;
+                saturn_probe_cnt <= 20'd0;
+            end
+            else if (db9md_ena) begin
+                saturn_probe     <= 1'b0;
+                saturn_probe_cnt <= 20'd0;
+                saturn_cycle_cnt <= 2'd0;
+            end
+            else if (saturn_probe_cnt < 20'd499999) begin
+                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+            end
+            else begin
+                saturn_probe     <= 1'b0;
+                saturn_probe_cnt <= 20'd0;
+                saturn_settle    <= 1'b1;
+            end
+        end
+        else if (saturn_settle) begin
+            if (saturn_probe_cnt < 20'd999999) begin
+                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+            end
+            else begin
+                saturn_settle    <= 1'b0;
+                saturn_probe_cnt <= 20'd0;
+                if (db9md_ena) begin
+                    saturn_cycle_cnt <= 2'd0;
+                end
+                else if (saturn_cycle_cnt < 2'd1) begin
+                    saturn_probe     <= 1'b1;
+                    saturn_cycle_cnt <= saturn_cycle_cnt + 1'd1;
+                end
+                else begin
+                    saturn_cycle_cnt <= 2'd0;
+                end
+            end
+        end
+        else if (~db9md_ena & db15_idle) begin
+            if (saturn_probe_cnt < 20'd999999) begin
+                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+            end
+            else begin
+                saturn_probe_cnt <= 20'd0;
+                saturn_settle    <= 1'b1;
+            end
+        end
+        else begin
+            saturn_probe_cnt <= 20'd0;
+        end
+    end
+end
+
+wire [1:0] joy_raw_detect = saturn_active ? 2'd1   // Saturn
+                          : db9md_ena     ? 2'd2   // DB9MD
+                          : db9_any_ena   ? 2'd3   // DB15
+                          :                 2'd0;
+
+// ---- Unified selector wires (probe vs user mode) ---------------------------
+// Probe mode → FSM state; user mode → joy_type-derived flags ANDed with
+// saturn_unlocked on the Saturn arm. db15_disable suppresses DB15 ghost output
+// while the floating-pin signature persists (boot-core exception applies in
+// probe mode — Main_MiSTer suppresses Saturn shm write when key missing).
+wire data_sel_saturn = probe_active ? saturn_active                              : (joy_saturn_en & saturn_unlocked);
+wire data_sel_db9md  = probe_active ? db9md_ena                                  : joy_db9md_en;
+wire data_sel_db15   = probe_active ? (db9_any_ena & ~db9md_ena & ~db15_disable) : joy_db15_en;
+
+// Drive-path: probe mode uses saturn_mode (continuous drive while saturn_active=1).
+wire drive_sel_saturn = probe_active ? saturn_mode                : joy_saturn_en;
+wire drive_sel_db9md  = probe_active ? (~saturn_any & db9md_ena)  : joy_db9md_en;
+wire drive_sel_db15   = probe_active ? (~saturn_any & ~db9md_ena) : joy_db15_en;
+
+// Saturn 1P routing: SINGLE in probe / user 1P, P1 in user 2P.
+wire        saturn_p1_single = probe_active | ~joy_2p;
+wire [15:0] saturn_p1        = saturn_p1_single ? JOYDBSATURN_SINGLE : JOYDBSATURN_1;
+// Saturn 2P: gate on BOTH-valid during probe so P2 stays 0 until both pads land.
+wire        saturn_p2_valid  = ~probe_active | JOYDBSATURN_BOTH;
+wire [15:0] saturn_p2        = saturn_p2_valid ? JOYDBSATURN_2 : 16'h0000;
+
+// [MiSTer-DB9-Pro BEGIN] - Saturn arm AND-gated with saturn_unlocked via data_sel_saturn
+assign joydb_1 = data_sel_saturn ? saturn_p1
+               : data_sel_db9md  ? JOYDB9MD_1
+               : data_sel_db15   ? JOYDB15_1
+               :                   16'h0000;
+assign joydb_2 = data_sel_saturn ? saturn_p2
+               : data_sel_db9md  ? JOYDB9MD_2
+               : data_sel_db15   ? JOYDB15_2
+               :                   16'h0000;
 // [MiSTer-DB9-Pro END]
-assign joydb_1ena = joy_any_en;
-assign joydb_2ena = joy_any_en & joy_2p;
+// Probe needs joydb_1 active even when user had Off (joy_any_en=0) so the OSD
+// nav path still sees Start+C from the hot-swapped pad.
+assign joydb_1ena = probe_active | joy_any_en;
+assign joydb_2ena = probe_active | (joy_any_en & joy_2p);
 
 assign USER_OSD  = joydb_1[10] & joydb_1[6];  // Start+C opens OSD
 
-// USER_PP_DRIVE: per-pin push-pull mask. Saturn term is the only gated bit
-// pattern (S0/S1/SPLIT on IO[6]/IO[4]/IO[2]) — gating happens here via
-// joy_saturn_en, which itself is held false unless the user selects Saturn.
-// DB9MD pushes pins 0 (SELECT) and 4 (TH); DB15 pushes pins 0 (LOAD) and 1 (CLK).
-assign USER_PP_DRIVE = joy_saturn_en ? 8'b01010100
-                     : joy_db9md_en  ? 8'b00010001
-                     : joy_db15_en   ? 8'b00000011
-                     :                 8'b00000000;
+// USER_PP_DRIVE: Saturn-settle (saturn_any & ~saturn_mode) forces all pins to
+// open-drain so IO[0]/IO[1] recover before the next probe. Mirrors Menu_MiSTer.
+assign USER_PP_DRIVE = drive_sel_saturn               ? 8'b01010100
+                     : (probe_active & saturn_any)    ? 8'b00000000
+                     : drive_sel_db9md                ? 8'b00010001
+                     : drive_sel_db15                 ? 8'b00000011
+                     :                                  8'b00000000;
 
-// USER_OUT pre-composed pattern. Cores compose with MT32 fallback if applicable:
+// Cores compose USER_OUT with MT32 fallback if applicable:
 //   assign USER_OUT = mt32_use ? mt32_drive : USER_OUT_DRIVE;
-// Hardware wiring: USER_OUT[2]=split-select, USER_OUT[4]=S0, USER_OUT[6]=S1.
 // [MiSTer-DB9-Pro BEGIN] - Saturn arm prepended (DB9-only baseline had no Saturn arm)
-assign USER_OUT_DRIVE = joy_saturn_en ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY_SAT_SPLIT,2'b11}
-                      : joy_db9md_en  ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL}
-                      : joy_db15_en   ? {6'b111111,JOY_CLK,JOY_LOAD}
-                      :                 8'hFF;
+assign USER_OUT_DRIVE = drive_sel_saturn            ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY_SAT_SPLIT,2'b11}
+                      : (probe_active & saturn_any) ? 8'hFF
+                      : drive_sel_db9md             ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL}
+                      : drive_sel_db15              ? {6'b111111, JOY_CLK, JOY_LOAD}
+                      :                               8'hFF;
 // [MiSTer-DB9-Pro END]
 
-// joy_raw payload: {joy_type, joydb_1[13:0] | joydb_2[13:0]}
-// joy_type itself encodes Saturn-vs-DB9MD-vs-DB15, so the [15:14] field
-// always matches the user's selection — no separate Pro AND-gate needed
-// here (the data path is already gated above at joydb_1/joydb_2).
-assign joy_raw = {joy_type, joydb_1[13:0] | joydb_2[13:0]};
+// joy_raw payload: {detected (while probing) | selected (otherwise), buttons}.
+assign joy_raw = {probe_active ? joy_raw_detect : joy_type, joydb_1[13:0] | joydb_2[13:0]};
 
 endmodule
