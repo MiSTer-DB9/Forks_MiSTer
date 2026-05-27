@@ -56,15 +56,15 @@ STABLE_TAG="${TAG_PREFIX}${DATE_STAMP}-${BUILD_SHA7}"
 # Only fill when empty — a real sync value is never overwritten.
 if [[ -z "${UPSTREAM_RELEASE_SHA:-}" || -z "${UPSTREAM_HEAD_AT_SYNC:-}" ]]; then
     mapfile -t PREV_TAGS < <(
-        gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
+        retry -- gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 \
             --exclude-drafts \
             --json tagName,createdAt \
             --jq "[.[] | select(.tagName | startswith(\"${TAG_PREFIX}\"))] | sort_by(.createdAt) | reverse | .[].tagName" \
-            2>/dev/null || true
+            || true
     )
     for _ptag in "${PREV_TAGS[@]}"; do
-        _pbody=$(gh release view "${_ptag}" --repo "${GITHUB_REPOSITORY}" \
-            --json body --jq '.body' 2>/dev/null || echo "")
+        _pbody=$(retry -- gh release view "${_ptag}" --repo "${GITHUB_REPOSITORY}" \
+            --json body --jq '.body' || echo "")
         [[ -z "${_pbody}" ]] && continue
         _phead=$(sed -nE 's/^upstream_head_at_sync:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${_pbody}" | head -1 || true)
         [[ -z "${_phead}" ]] && continue

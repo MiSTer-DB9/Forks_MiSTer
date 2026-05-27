@@ -57,14 +57,14 @@ retry -- gh release upload "${UNSTABLE_TAG}" \
 # Annotate release body with the SHAs the next run's pre-check needs.
 echo
 echo "Updating release body with last-built SHAs..."
-gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" \
+retry -- gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" \
     --notes "$(write_release_body "${UPSTREAM_SHA}" "${MASTER_SHA}" "${BRANCH_SHA}" "${TIMESTAMP}" "${SOURCE_HASH}")"
 
 # Prune older assets per core to keep only ${RETENTION} most-recent RBFs.
 # Single API call serves every core.
 echo
 echo "Pruning to last ${RETENTION} RBFs per core..."
-ASSETS_JSON=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${UNSTABLE_TAG}" --jq '.assets')
+ASSETS_JSON=$(retry -- gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${UNSTABLE_TAG}" --jq '.assets')
 for i in "${!CORE_NAME[@]}"; do
     PREFIX="${CORE_NAME[i]}_unstable_"
     mapfile -t TO_DELETE < <(

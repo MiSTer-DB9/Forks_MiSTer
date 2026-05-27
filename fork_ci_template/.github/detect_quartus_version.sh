@@ -38,6 +38,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=retry.sh
+source "${SCRIPT_DIR}/retry.sh"
+
 # quartus-install repo to query for the supported version set. Same default
 # as setup_cicd.sh:13; release.yml/unstable_release.yml thread the
 # deployment's <<QUARTUS_INSTALL_REPO>> into the Resolve step's env.
@@ -66,14 +70,14 @@ _quartus_load_keys() {
     local tmp keys
     tmp=$(mktemp -d) || {
         echo "detect_quartus_version: mktemp failed" >&2; return 1; }
-    if ! git clone --depth 1 --quiet "${QUARTUS_INSTALL_REPO}" \
-            "${tmp}/qi" 2>/dev/null; then
+    if ! retry -- git clone --depth 1 --quiet "${QUARTUS_INSTALL_REPO}" \
+            "${tmp}/qi"; then
         rm -rf "${tmp}"
         echo "detect_quartus_version: could not clone ${QUARTUS_INSTALL_REPO}" >&2
         return 1
     fi
-    if ! keys=$(python3 "${tmp}/qi/quartus-install.py" \
-            --list-versions 2>/dev/null); then
+    if ! keys=$(retry -- python3 "${tmp}/qi/quartus-install.py" \
+            --list-versions); then
         rm -rf "${tmp}"
         echo "detect_quartus_version: 'quartus-install.py --list-versions' failed (${QUARTUS_INSTALL_REPO})" >&2
         return 1

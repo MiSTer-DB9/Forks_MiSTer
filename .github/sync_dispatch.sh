@@ -131,10 +131,10 @@ _check_stable() {
     local TAG_PREFIX="stable/${MAIN_BRANCH}/"
     local STORED_RELEASE_SHA="" STORED_HEAD=""
     local RELEASE_JSON
-    RELEASE_JSON=$(curl -fsSL \
+    RELEASE_JSON=$(retry -- curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/releases?per_page=100" 2>/dev/null || echo "")
+        "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/releases?per_page=100" || echo "")
     if [[ -n "${RELEASE_JSON}" ]]; then
         local RELEASE_BODY
         # Pick the newest tag-prefix release whose body carries a populated
@@ -170,10 +170,10 @@ if matched:
 
     local CURRENT_RELEASE_SHA=""
     local CONTENTS_JSON
-    CONTENTS_JSON=$(curl -fsSL \
+    CONTENTS_JSON=$(retry -- curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/contents/releases?ref=${UPSTREAM_BRANCH}" 2>/dev/null || echo "")
+        "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/contents/releases?ref=${UPSTREAM_BRANCH}" || echo "")
     if [[ -n "${CONTENTS_JSON}" ]]; then
         local RELEASE_FILE
         RELEASE_FILE=$(printf '%s' "${CONTENTS_JSON}" | jq -r \
@@ -181,10 +181,10 @@ if matched:
             '[.[] | select(.name | contains($core)) | .name] | sort | reverse | .[0] // empty' \
             2>/dev/null || echo "")
         if [[ -n "${RELEASE_FILE}" ]]; then
-            CURRENT_RELEASE_SHA=$(curl -fsSL \
+            CURRENT_RELEASE_SHA=$(retry -- curl -fsSL \
                 -H "Authorization: token ${DISPATCH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/commits?path=releases/${RELEASE_FILE}&sha=${UPSTREAM_BRANCH}&per_page=1" 2>/dev/null \
+                "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/commits?path=releases/${RELEASE_FILE}&sha=${UPSTREAM_BRANCH}&per_page=1" \
                 | jq -r '.[0].sha // empty' 2>/dev/null || echo "")
         fi
     fi
@@ -203,10 +203,10 @@ if matched:
     # before dispatching. The release commit may already be in the fork even
     # without the stored field (pre-migration releases).
     local COMPARE_STATUS
-    COMPARE_STATUS=$(curl -fsSL \
+    COMPARE_STATUS=$(retry -- curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/compare/${CURRENT_RELEASE_SHA}...${MAIN_BRANCH}" 2>/dev/null \
+        "https://api.github.com/repos/${FORK_OWNER}/${FORK_NAME}/compare/${CURRENT_RELEASE_SHA}...${MAIN_BRANCH}" \
         | jq -r '.status // empty' 2>/dev/null || echo "")
     if [[ "${COMPARE_STATUS}" == "ahead" || "${COMPARE_STATUS}" == "identical" ]]; then
         echo "[${fork_name}] release commit ${CURRENT_RELEASE_SHA:0:7} already in fork — skipping"
