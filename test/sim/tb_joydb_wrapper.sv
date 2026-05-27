@@ -97,8 +97,11 @@ module tb_joydb_wrapper;
     chk("db15-1p ena1",    joydb_1ena,        1'b1);
     chk("db15-1p ena2",    joydb_2ena,        1'b0);
     chk("db15-1p USER_PP", USER_PP_DRIVE,     8'b00000011);
-    // USER_OUT_DRIVE = {6'b111111, JOY_CLK, JOY_LOAD}: top 6 bits constant 1.
-    chk("db15-1p UO[7:2]", USER_OUT_DRIVE[7:2], 6'b111111);
+    // USER_OUT_DRIVE = {6'b111011, JOY_CLK, JOY_LOAD}: bit 4 driven low to
+    // park the DB9MD 74HC157D splitter SEL on port A (P1 jack) so the
+    // OSD-autodetect FSM can read DB9MD's USER_IN[7] / DOWN signature on the
+    // P1 jack while in the DB15-idle path. Matches Menu_MiSTer/menu.sv:229.
+    chk("db15-1p UO[7:2]", USER_OUT_DRIVE[7:2], 6'b111011);
     chk("db15-1p jr_type", joy_raw[15:14],    2'd3);
 
     // ---- DB15 2P: both decode, P2 enabled ----

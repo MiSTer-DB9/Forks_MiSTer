@@ -393,7 +393,7 @@ assign USER_PP_DRIVE = drive_sel_saturn               ? 8'b01010100
 assign USER_OUT_DRIVE = drive_sel_saturn            ? {1'b1,JOY_SAT_S1,1'b1,JOY_SAT_S0,1'b1,JOY_SAT_SPLIT,2'b11}
                       : (probe_active & saturn_any) ? 8'hFF
                       : drive_sel_db9md             ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL}
-                      : drive_sel_db15              ? {6'b111111, JOY_CLK, JOY_LOAD}
+                      : drive_sel_db15              ? {6'b111011, JOY_CLK, JOY_LOAD}
                       :                               8'hFF;
 // [MiSTer-DB9-Pro END]
 
