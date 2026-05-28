@@ -263,9 +263,12 @@ always @(posedge clk) begin
         end
         else db15_recover_cnt <= 20'd0;
 
-        // DB15/DB9MD active latch: any button-2 press on either port.
-        if (JOYDB9MD_1[2] | JOYDB15_1[2]) db9_any_ena <= 1'b1;
-        if ((~JOYDB9MD_1[2] & JOYDB9MD_2[2]) | JOYDB15_2[2]) db9_any_ena <= 1'b1;
+        // DB15/DB9MD active latch: any button-2 press on either port. Cleared
+        // when db9md_ena is positively asserted so a positive DB9MD signature
+        // wins over a sticky DB15 latch (e.g. phantom button-2 from a floating
+        // 2P-MUX side during a missed MD handshake).
+        if (JOYDB9MD_1[2] | JOYDB15_1[2] | (~JOYDB9MD_1[2] & JOYDB9MD_2[2]) | JOYDB15_2[2]) db9_any_ena <= 1'b1;
+        else if (db9md_ena) db9_any_ena <= 1'b0;
 
         // Saturn autodetect: idle → settle → probe → settle → ... → active.
         // saturn_any masks JOY_DATA / JOY_MDIN; saturn_mode drives Saturn pins.
