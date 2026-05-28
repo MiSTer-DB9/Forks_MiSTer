@@ -1,9 +1,15 @@
 name: Sync jtcores
 
 # jtcores can't ride setup_cicd.yml (which rm -rf's .github and stamps the
-# DB9 template) — jotego owns that tree. This workflow only mirrors the
-# 3 gate-trio files into modules/jtframe/target/mister/hdl/sys/ on jtcores
-# master so the FPGA SipHash stays byte-equal to Main_MiSTer/siphash24.c.
+# DB9 template) — jotego owns that tree. This workflow mirrors the canonical
+# sys/ helpers into jtcores at two destinations under
+# modules/jtframe/target/mister/hdl/:
+#   hdl/sys/   key-gate trio (siphash24.v, db9_key_gate.sv, db9_key_secret.vh)
+#              keeps the FPGA SipHash byte-equal to Main_MiSTer/siphash24.c
+#   hdl/       joydb wrapper + 2 helpers (joydb.sv with OSD-open autodetect
+#              FSM, joydb9md.v, joydb9saturn.v)
+# joydb15.v intentionally excluded — jt's copy carries an SDRAM96 ifdef
+# canonical drops; see sync_jtcores.sh header.
 
 on:
   push:
@@ -12,6 +18,10 @@ on:
       - fork_ci_template/sys/siphash24.v
       - fork_ci_template/sys/db9_key_gate.sv
       - fork_ci_template/sys/db9_key_secret.vh
+      - fork_ci_template/sys/joydb.sv
+      - fork_ci_template/sys/joydb9md.v
+      - fork_ci_template/sys/joydb9saturn.v
+      # joydb15.v intentionally excluded — see sync_jtcores.sh header
       - .github/sync_jtcores.sh
       - .github/workflows/sync_jtcores.yml
   workflow_dispatch:

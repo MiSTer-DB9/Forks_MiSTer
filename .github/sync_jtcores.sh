@@ -1,15 +1,33 @@
 #!/usr/bin/env bash
-# jtcores gate-trio sync (v1.5 key gate)
+# jtcores canonical-sys sync (v1.5 key gate + joydb wrapper)
 #
-# Mirrors fork_ci_template/sys/{siphash24.v,db9_key_gate.sv,db9_key_secret.vh}
-# into MiSTer-DB9/jtcores at modules/jtframe/target/mister/hdl/sys/. jtcores
-# can't ride setup_cicd_on_fork() because that function rm -rf's .github and
-# stamps the DB9 template — jotego owns jtcores' workflows. This script does
-# only the file copy + commit + push.
+# Mirrors canonical fork_ci_template/sys/ files into MiSTer-DB9/jtcores at
+# two destinations under modules/jtframe/target/mister/hdl/:
 #
-# Tripwire: db9_key_gate.sv at the jtframe path (added by the v1.5 Phase 2
-# wiring, jtcores-only, never produced by Jotego upstream). Soft-exits 0 if
-# absent so a future revert of the wiring doesn't fail CI.
+#   hdl/sys/   key-gate trio: siphash24.v, db9_key_gate.sv, db9_key_secret.vh
+#   hdl/       joydb wrapper + 2 helpers: joydb.sv, joydb9md.v, joydb9saturn.v
+#
+# joydb.sv carries the OSD-open autodetect FSM (Saturn/DB9MD/DB15 hot-swap
+# while OSD is open). joydb9md.v and joydb9saturn.v ship alongside because
+# joydb.sv instantiates them and they must stay byte-equal to the fork's
+# other ports.
+#
+# joydb15.v is intentionally NOT synced: jt's in-tree copy has the
+# `ifdef JTFRAME_SDRAM96` branch that picks JCLOCKS[4] instead of JCLOCKS[3]
+# so the DB15 strobe stays at ~3 MHz when the game `clk` doubles to 96 MHz
+# (CPS1.5 / CPS2 / SH7604 family). Canonical drops that ifdef; replacing
+# jt's copy would double the DB15 strobe to 6 MHz on every SDRAM96 build.
+# joydb.sv's joy_db15 instance only uses the port list (clk/JOY_CLK/JOY_LOAD/
+# JOY_DATA/joystick1/joystick2), which is identical in both versions, so
+# the canonical wrapper drops in cleanly against jt's joydb15.v.
+#
+# jtcores can't ride setup_cicd_on_fork() because that function rm -rf's
+# .github and stamps the DB9 template — jotego owns jtcores' workflows.
+# This script does only the file copy + commit + push.
+#
+# Tripwire: db9_key_gate.sv at hdl/sys/ (added by the v1.5 Phase 2 wiring,
+# jtcores-only, never produced by Jotego upstream). Soft-exits 0 if absent
+# so a future revert of the wiring doesn't fail CI.
 
 set -euo pipefail
 
@@ -20,7 +38,25 @@ source "${SCRIPT_DIR}/lib/retry.sh"
 FORK_REPO="https://github.com/MiSTer-DB9/jtcores.git"
 MAIN_BRANCH="master"
 JTFRAME_SYS_PATH="modules/jtframe/target/mister/hdl/sys"
-GATE_FILES=(siphash24.v db9_key_gate.sv db9_key_secret.vh)
+JTFRAME_HDL_PATH="modules/jtframe/target/mister/hdl"
+# Basename -> destination dir relative to the jtcores repo root.
+# Ordered map so the copy / git-add loops emit deterministic output.
+SYNC_BASENAMES=(
+    siphash24.v
+    db9_key_gate.sv
+    db9_key_secret.vh
+    joydb.sv
+    joydb9md.v
+    joydb9saturn.v
+)
+declare -A SYNC_DEST_DIR=(
+    [siphash24.v]="${JTFRAME_SYS_PATH}"
+    [db9_key_gate.sv]="${JTFRAME_SYS_PATH}"
+    [db9_key_secret.vh]="${JTFRAME_SYS_PATH}"
+    [joydb.sv]="${JTFRAME_HDL_PATH}"
+    [joydb9md.v]="${JTFRAME_HDL_PATH}"
+    [joydb9saturn.v]="${JTFRAME_HDL_PATH}"
+)
 
 if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
     >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -45,8 +81,13 @@ if [[ ! -f "${TEMP_DIR}/${JTFRAME_SYS_PATH}/db9_key_gate.sv" ]]; then
     exit 0
 fi
 
-for f in "${GATE_FILES[@]}"; do
-    cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/${JTFRAME_SYS_PATH}/${f}"
+for f in "${SYNC_BASENAMES[@]}"; do
+    dest="${SYNC_DEST_DIR[$f]}"
+    # Dest dir is guaranteed to exist on a v1.5-wired jtcores: hdl/ carries
+    # the legacy joydb*.{sv,v}, hdl/sys/ carries the gate trio. No mkdir -p
+    # on purpose — a missing dir means the sync would otherwise land in the
+    # wrong tree and we want the cp to hard-fail instead.
+    cp "fork_ci_template/sys/${f}" "${TEMP_DIR}/${dest}/${f}"
 done
 
 pushd "${TEMP_DIR}" > /dev/null 2>&1
@@ -54,8 +95,8 @@ pushd "${TEMP_DIR}" > /dev/null 2>&1
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
 
-for f in "${GATE_FILES[@]}"; do
-    git add "${JTFRAME_SYS_PATH}/${f}"
+for f in "${SYNC_BASENAMES[@]}"; do
+    git add "${SYNC_DEST_DIR[$f]}/${f}"
 done
 
 if git diff --staged --quiet --exit-code ; then
@@ -63,7 +104,7 @@ if git diff --staged --quiet --exit-code ; then
 else
     # Commit subject must match the legacy SYNC_JTFRAME branch (removed from
     # setup_cicd.sh) so any future grep over jtcores history finds both eras.
-    echo "Committing jtframe gate-trio drift."
+    echo "Committing jtframe canonical-sys drift."
     git commit -m "BOT: Sync jtframe sys/ gate files from fork_ci_template." \
                -m "From https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
     retry -- git push "${FORK_PUSH_URL}" "fork_master:${MAIN_BRANCH}"
