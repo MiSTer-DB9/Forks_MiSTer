@@ -8,11 +8,22 @@ module joy_db9md(
     output joy_mdsel,
     output joy_split,
     output [11:0] joystick1,
-    output [11:0] joystick2
+    output [11:0] joystick2,
+    // Protocol-level 6-button pad detect. The internal joy*_6btn regs reset
+    // each scan at state 2 and get set at state 5 iff the pad responds with
+    // joy_in[3:0]==0 (the documented 6-btn handshake). Sampling them raw
+    // from outside catches the ~20 us state-2..5 window where the flag is
+    // transiently 0 even when a 6-btn pad is connected. These outputs latch
+    // the stable value at state 6 instead so consumers see a clean per-scan
+    // (~1.3 ms) flag — no glitch, no sticky bias, automatically clears when
+    // a 6-btn pad is unplugged. Default 0 at reset (cold-boot safe).
+    output joy1_is_6btn,
+    output joy2_is_6btn
 );
 
 reg [7:0]state = 8'd0;
 reg joy1_6btn = 1'b0, joy2_6btn = 1'b0;
+reg joy1_6btn_lat = 1'b0, joy2_6btn_lat = 1'b0;
 reg [11:0] joyMDdat1 = 12'hFFF, joyMDdat2 = 12'hFFF;
 reg [5:0] joy1_in, joy2_in;
 reg joyMDsel, joySEL = 1'b0;
@@ -120,6 +131,12 @@ always @(posedge clk) begin
                 if (joy2_6btn == 1'b1) begin
                     joyMDdat2[11:8] <= joy2_in[4:0]; // -- Mode, X, Y e Z
                 end
+                // Latch the per-scan 6-btn flag here (after state 5 has set it).
+                // Output stays steady from this point until state 6 of the next
+                // scan ~1.3 ms later, so external consumers never see the
+                // state-2 reset transient.
+                joy1_6btn_lat <= joy1_6btn;
+                joy2_6btn_lat <= joy2_6btn;
                 joyMDsel <= 1'b0;
 
                 // Start (joyMDdat[7]) and B (joyMDdat[4]) are active-low here.
@@ -163,5 +180,8 @@ assign joystick2 = joy2_mode_inject
 
 assign joy_mdsel = joyMDsel;
 assign joy_split = joySplit;
+
+assign joy1_is_6btn = joy1_6btn_lat;
+assign joy2_is_6btn = joy2_6btn_lat;
 
 endmodule
