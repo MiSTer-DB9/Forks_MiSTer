@@ -20,13 +20,23 @@ reg [15:0] joy1 = 16'hFFFF, joy2  = 16'hFFFF;
 reg joy_renew = 1'b1;
 reg [4:0] joy_count = 5'd0;
 
+// JTFRAME_SDRAM96 is defined by jotego's CPS1.5 / CPS2 / SH7604 builds where
+// the master `clk` is doubled to 96 MHz. Picking JCLOCKS[4] there keeps the
+// splitter strobe at the spec-mandated ~3 MHz; JCLOCKS[3] would put it at
+// ~6 MHz, outside the 74HC165 timing window. The macro is undefined for
+// every non-jt core (50 MHz clk), which selects the original /16 path.
+`ifdef JTFRAME_SDRAM96
+assign JOY_CLK = JCLOCKS[4]; // 3Mhz at 96 MHz clk, drives the splitter's external clock pin
+// Tick fires once per /32 period — the cycle JCLOCKS[4] first becomes 1.
+wire joy_tick = (JCLOCKS[4:0] == 5'b10000);
+`else
 assign JOY_CLK = JCLOCKS[3]; // 3Mhz, drives the splitter's external clock pin
-assign JOY_LOAD = joy_renew;
-
 // Tick fires once per /16 period — the cycle JCLOCKS[3] first becomes 1, i.e.
 // the same instant `posedge JOY_CLK` was triggering before. Bodies execute one
 // clk cycle later (~20 ns at 50 MHz, vs the 333 ns DB15 bit period).
 wire joy_tick = (JCLOCKS[3:0] == 4'b1000);
+`endif
+assign JOY_LOAD = joy_renew;
 
 always @(posedge clk) if (joy_tick) begin
     joy_renew <= (joy_count != 5'd0);

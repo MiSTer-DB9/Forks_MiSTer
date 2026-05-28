@@ -6,10 +6,12 @@ name: Sync jtcores
 # modules/jtframe/target/mister/hdl/:
 #   hdl/sys/   key-gate trio (siphash24.v, db9_key_gate.sv, db9_key_secret.vh)
 #              keeps the FPGA SipHash byte-equal to Main_MiSTer/siphash24.c
-#   hdl/       joydb wrapper + 2 helpers (joydb.sv with OSD-open autodetect
-#              FSM, joydb9md.v, joydb9saturn.v)
-# joydb15.v intentionally excluded — jt's copy carries an SDRAM96 ifdef
-# canonical drops; see sync_jtcores.sh header.
+#   hdl/       joydb wrapper + 3 helpers (joydb.sv with OSD-open autodetect
+#              FSM, joydb9md.v, joydb9saturn.v, joydb15.v)
+# joydb15.v now syncs too — canonical absorbed the JTFRAME_SDRAM96 ifdef
+# (JCLOCKS[4] / /32 tick) so the 96 MHz CPS1.5/CPS2/SH7604 timing is
+# preserved while non-jt cores stay on the original /16 path. See
+# sync_jtcores.sh header.
 
 on:
   push:
@@ -21,7 +23,7 @@ on:
       - fork_ci_template/sys/joydb.sv
       - fork_ci_template/sys/joydb9md.v
       - fork_ci_template/sys/joydb9saturn.v
-      # joydb15.v intentionally excluded — see sync_jtcores.sh header
+      - fork_ci_template/sys/joydb15.v
       - .github/sync_jtcores.sh
       - .github/workflows/sync_jtcores.yml
   workflow_dispatch:

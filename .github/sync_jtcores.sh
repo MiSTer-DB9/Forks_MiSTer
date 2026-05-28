@@ -5,21 +5,19 @@
 # two destinations under modules/jtframe/target/mister/hdl/:
 #
 #   hdl/sys/   key-gate trio: siphash24.v, db9_key_gate.sv, db9_key_secret.vh
-#   hdl/       joydb wrapper + 2 helpers: joydb.sv, joydb9md.v, joydb9saturn.v
+#   hdl/       joydb wrapper + 3 helpers: joydb.sv, joydb9md.v, joydb9saturn.v,
+#              joydb15.v
 #
 # joydb.sv carries the OSD-open autodetect FSM (Saturn/DB9MD/DB15 hot-swap
 # while OSD is open). joydb9md.v and joydb9saturn.v ship alongside because
 # joydb.sv instantiates them and they must stay byte-equal to the fork's
 # other ports.
 #
-# joydb15.v is intentionally NOT synced: jt's in-tree copy has the
-# `ifdef JTFRAME_SDRAM96` branch that picks JCLOCKS[4] instead of JCLOCKS[3]
-# so the DB15 strobe stays at ~3 MHz when the game `clk` doubles to 96 MHz
-# (CPS1.5 / CPS2 / SH7604 family). Canonical drops that ifdef; replacing
-# jt's copy would double the DB15 strobe to 6 MHz on every SDRAM96 build.
-# joydb.sv's joy_db15 instance only uses the port list (clk/JOY_CLK/JOY_LOAD/
-# JOY_DATA/joystick1/joystick2), which is identical in both versions, so
-# the canonical wrapper drops in cleanly against jt's joydb15.v.
+# joydb15.v is now synced too: canonical absorbed the `ifdef JTFRAME_SDRAM96`
+# branch (JCLOCKS[4] / /32 tick under 96 MHz clk) that previously kept jt's
+# copy divergent. The macro is undefined for every non-jt core so the
+# default /16 path is byte-for-byte equivalent there; jt builds that define
+# JTFRAME_SDRAM96 pick the /32 path and keep the 3 MHz strobe.
 #
 # jtcores can't ride setup_cicd_on_fork() because that function rm -rf's
 # .github and stamps the DB9 template — jotego owns jtcores' workflows.
@@ -48,6 +46,7 @@ SYNC_BASENAMES=(
     joydb.sv
     joydb9md.v
     joydb9saturn.v
+    joydb15.v
 )
 declare -A SYNC_DEST_DIR=(
     [siphash24.v]="${JTFRAME_SYS_PATH}"
@@ -56,6 +55,7 @@ declare -A SYNC_DEST_DIR=(
     [joydb.sv]="${JTFRAME_HDL_PATH}"
     [joydb9md.v]="${JTFRAME_HDL_PATH}"
     [joydb9saturn.v]="${JTFRAME_HDL_PATH}"
+    [joydb15.v]="${JTFRAME_HDL_PATH}"
 )
 
 if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
