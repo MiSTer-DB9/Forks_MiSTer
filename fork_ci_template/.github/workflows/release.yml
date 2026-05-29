@@ -180,8 +180,11 @@ jobs:
     needs: [preflight, build]
     # !cancelled() (not needs.build.result == 'success') so a partial set still
     # publishes — fail-fast:false keeps siblings building; a failed core just
-    # has no artifact and is absent from the bundle.
-    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
+    # has no artifact and is absent from the bundle. But require preflight to
+    # have SUCCEEDED: if preflight failed its outputs are empty, the '!= true'
+    # checks all pass, and publish would run with blank env and die at
+    # release_publish.sh — a spurious second failure on top of the real one.
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
