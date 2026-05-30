@@ -235,41 +235,62 @@ _check_unstable() {
         return 2  # error, not "no dispatch needed"
     fi
 
-    local RELEASE_JSON LAST_SHA LAST_FAILED_SHA
+    # Also resolve the fork's own MAIN_BRANCH HEAD so a downstream change — the
+    # Forks_MiSTer sys/ helper propagation pushed to the fork master by
+    # setup_cicd.sh — triggers a rebuild even when upstream HEAD is unchanged.
+    # Compared against last_unstable_master_sha from the release-body stanza
+    # (the preflight already rewrites that field on every build AND skip path,
+    # so the gate self-resets and never redispatches the same master HEAD).
+    # If resolution fails, leave empty → master comparison skipped → falls back
+    # to upstream-only behaviour.
+    local FORK_MASTER_HEAD
+    FORK_MASTER_HEAD=$(retry -- git ls-remote \
+        "https://${DISPATCH_USER}:${DISPATCH_TOKEN}@github.com/${OWNER}/${NAME}" \
+        "refs/heads/${MAIN_BRANCH}" | awk '{print $1}' || echo "")
+
+    local RELEASE_JSON LAST_SHA LAST_MASTER_SHA LAST_FAILED_SHA
     RELEASE_JSON=$(curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${OWNER}/${NAME}/releases/tags/${UNSTABLE_TAG}" 2>/dev/null || echo "")
     if [[ -n "${RELEASE_JSON}" ]]; then
-        { read -r LAST_SHA; read -r LAST_FAILED_SHA; } < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
+        { read -r LAST_SHA; read -r LAST_MASTER_SHA; read -r LAST_FAILED_SHA; } < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
 import json, sys, os, re
 try:
     body = json.load(sys.stdin).get("body","")
 except Exception:
-    print(); print(); sys.exit(0)
+    print(); print(); print(); sys.exit(0)
 branch = os.environ["MAIN_BRANCH"]
 pat = re.compile(rf"\[{re.escape(branch)}\]\s*\n(.*?)(?=\n\[|\Z)", re.DOTALL)
 m = pat.search(body)
 stanza = m.group(1) if m else ""
-for key in ("last_unstable_sha", "last_failed_sha"):
+for key in ("last_unstable_sha", "last_unstable_master_sha", "last_failed_sha"):
     mm = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", stanza)
     print(mm.group(1) if mm else "")
 ')
     fi
     LAST_SHA="${LAST_SHA:-}"
+    LAST_MASTER_SHA="${LAST_MASTER_SHA:-}"
     LAST_FAILED_SHA="${LAST_FAILED_SHA:-}"
 
-    if [[ -n "${LAST_FAILED_SHA}" && "${LAST_FAILED_SHA}" == "${UPSTREAM_HEAD}" ]]; then
+    local UPSTREAM_CHANGED=0 MASTER_CHANGED=0
+    [[ "${LAST_SHA}" != "${UPSTREAM_HEAD}" ]] && UPSTREAM_CHANGED=1
+    [[ -n "${FORK_MASTER_HEAD}" && "${LAST_MASTER_SHA}" != "${FORK_MASTER_HEAD}" ]] && MASTER_CHANGED=1
+
+    if (( ! UPSTREAM_CHANGED && ! MASTER_CHANGED )); then
+        echo "[${fork_name}] upstream ${UPSTREAM_HEAD:0:7} + master ${FORK_MASTER_HEAD:0:7} unchanged — skipping"
+        return 1
+    fi
+
+    # Cooldown is upstream-keyed; it only blocks an upstream-only retry. A
+    # genuine downstream (sys/) change is new source → always worth a rebuild,
+    # even if the previous attempt for this upstream HEAD failed.
+    if (( ! MASTER_CHANGED )) && [[ -n "${LAST_FAILED_SHA}" && "${LAST_FAILED_SHA}" == "${UPSTREAM_HEAD}" ]]; then
         echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} matches last_failed_sha — cooldown active, skipping"
         return 1
     fi
 
-    if [[ -n "${LAST_SHA}" && "${LAST_SHA}" == "${UPSTREAM_HEAD}" ]]; then
-        echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} already built — skipping"
-        return 1
-    fi
-
-    echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} != last ${LAST_SHA:0:7} — dispatching ${WORKFLOW_FILE} on ${MAIN_BRANCH}"
+    echo "[${fork_name}] dispatching (upstream_changed=${UPSTREAM_CHANGED} master_changed=${MASTER_CHANGED}) upstream=${UPSTREAM_HEAD:0:7} master=${FORK_MASTER_HEAD:0:7} — ${WORKFLOW_FILE} on ${MAIN_BRANCH}"
     return 0
 }
 
