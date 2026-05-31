@@ -252,6 +252,25 @@ def _inject_pristine_sys_top(text: str, notes: list[str], path: Path) -> str:
         )
         notes.append(f'{path}: pristine inject — SD_SPI_CS port commented out')
 
+        # 1b. Commenting the SD_SPI_CS output port leaves the body's
+        # `assign SD_SPI_CS = ...;` lines driving an undeclared net. Most
+        # cores compile fine (implicit net = wire), but a core whose RTL
+        # leaks `\`default_nettype none` into sys_top.v (e.g. Enterprise)
+        # hits Quartus A&S error 10162 on the implicit net. Declare the net
+        # explicitly in the body so the dead assigns stay legal regardless.
+        # Idempotent — skip if already declared.
+        if 'wire SD_SPI_CS' not in text:
+            text = re.sub(
+                r'^([ \t]*)(wire[ \t]+SD_CS,[^\n]*;)[ \t]*\n',
+                r'\1\2\n'
+                r'\1// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: declare SD_SPI_CS net so the\n'
+                r'\1// commented-port dead assigns stay legal under a leaked `default_nettype none`\n'
+                r'\1wire SD_SPI_CS;\n'
+                r'\1// [MiSTer-DB9 END]\n',
+                text, count=1, flags=re.MULTILINE,
+            )
+            notes.append(f'{path}: pristine inject — declared SD_SPI_CS net (default_nettype none safety)')
+
     text = re.sub(
         r'^([ \t]*)inout[ \t]+\[6:0\][ \t]+USER_IO([^\n]*)\n',
         r'\1// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support\n'
