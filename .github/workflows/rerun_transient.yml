@@ -35,5 +35,5 @@ jobs:
     - name: Rerun transient failures
       run: ./.github/rerun_transient.sh
       env:
-        GH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_THEYPSILON }}
+        GH_TOKEN: ${{ secrets.REPOSITORY_DISPATCH_TOKEN }}
         DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
