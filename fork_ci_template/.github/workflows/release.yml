@@ -157,6 +157,12 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
+        # Timing/ALM regression gate (quartus_build.sh). Per-fork override via
+        # repo variables; default = quartus_build.sh's built-in fallback.
+        SEED_RETRY_MAX: ${{ vars.SEED_RETRY_MAX || '2' }}
+        TIMING_MARGIN_NS: ${{ vars.TIMING_MARGIN_NS || '0.5' }}
+        TIMING_RISK_FLOOR_NS: ${{ vars.TIMING_RISK_FLOOR_NS || '1.0' }}
+        ALM_UTIL_WARN_PCT: ${{ vars.ALM_UTIL_WARN_PCT || '80' }}
 
     - name: Upload RBF artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

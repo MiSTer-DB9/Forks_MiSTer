@@ -27,6 +27,13 @@
 # with the validated X/glib/font libs apt'd per build.
 # QUARTUS_NATIVE_VERSION (resolved std key) and QUARTUS_NATIVE_HOME are both
 # required. GITHUB_TOKEN is needed by every gh release call in both callers.
+
+# Timing/ALM regression baseline fetch (fetch_prior_metrics). Same .github dir;
+# propagated to forks by the same `cp -rL fork_ci_template/.github` setup_cicd
+# uses (the symlink dereferences to a real file in each fork's .github/).
+# shellcheck source=timing_baseline.sh
+source "$(dirname "${BASH_SOURCE[0]}")/timing_baseline.sh"
+
 resolve_quartus_env() {
     QUARTUS_NATIVE_VERSION="${QUARTUS_NATIVE_VERSION:-}"
     QUARTUS_NATIVE_HOME="${QUARTUS_NATIVE_HOME:-}"
@@ -75,6 +82,108 @@ quartus_build_preflight() {
 # so a failed compile still aborts the run.
 _notify_build_fail() {
     ./.github/notify_error.sh "${LABEL} COMPILATION ERROR (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}"
+}
+
+# --- Timing/ALM regression gate (dynamic-scope on build_cores' loop locals) ---
+# Quartus emits an RBF even when timing FAILS, so a fork-side change can ship a
+# timing-regressed (e.g. video-glitched) bitstream — this happened on
+# ao486_USERIO2. We compare each build's per-clock worst slack against the last
+# good build (regression-relative, because MiSTer cores ship benign negative
+# slack) and reseed the fitter to recover a timing regression.
+
+# Cannot recover the regression -> per-channel policy.
+#   STABLE  : abort the leg (notify_error.sh exits 1) -> ship no RBF for this core
+#   UNSTABLE: ship the best-of-N seed but alert (it's the merge canary)
+_db9_timing_fail() {
+    if [[ "${LABEL}" == "STABLE" ]]; then
+        ./.github/notify_error.sh "STABLE TIMING REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}"
+    else
+        ./.github/notify_error.sh "UNSTABLE TIMING REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
+    fi
+}
+
+# Reseed the fitter up to SEED_MAX times. Ship the first seed that VERIFIABLY
+# closes the regression; if none does, keep the least-bad (highest worst-case
+# setup slack) build for the UNSTABLE best-of-N fallback. The chosen build is
+# promoted into COMPILATION_OUTPUT + METRICS_JSON.
+_db9_reseed_loop() {
+    [[ "${OUTDIR}" == "." || -z "${OUTDIR}" ]] && { _db9_timing_fail; return; }
+    local seed rc cur best_slack recovered=0
+    cp "${QSF}" "${QSF}.db9orig"
+    cp "${COMPILATION_OUTPUT[i]}" "/tmp/${MKEY}.db9best.rbf"
+    cp "${METRICS_JSON}" "/tmp/${MKEY}.db9best.json"
+    # `|| best_slack=nan`: bare cmd-sub assignments propagate set -e on failure;
+    # tolerate an unreadable metrics file instead of aborting the whole leg.
+    best_slack="$(python3 ./.github/quartus_metrics.py worst "${METRICS_JSON}")" || best_slack="nan"
+    for (( seed = 2; seed <= 1 + SEED_MAX; seed++ )); do
+        echo "Timing regression on ${REV}: retrying fit with SEED ${seed} (attempt $(( seed - 1 ))/${SEED_MAX})..."
+        # Reproducible seeds (not $RANDOM). Keep exactly one SEED line: drop any
+        # existing assignment from the original qsf, then append ours.
+        grep -ivE '^[[:space:]]*set_global_assignment[[:space:]]+-name[[:space:]]+SEED[[:space:]]' \
+            "${QSF}.db9orig" > "${QSF}" || true
+        echo "set_global_assignment -name SEED ${seed}" >> "${QSF}"
+        rm -rf "${QDIR}/db" "${QDIR}/incremental_db" "${OUTDIR}"
+        if ! "${QRT_RUN[@]}" bash -c "${QRT_CMD}"; then
+            echo "::warning::SEED ${seed} compile failed for ${REV}; keeping best so far."
+            continue
+        fi
+        [[ -f "${COMPILATION_OUTPUT[i]}" ]] || { echo "::warning::SEED ${seed} produced no RBF for ${REV}."; continue; }
+        DB9_SEED="${seed}" python3 ./.github/quartus_metrics.py parse "${OUTDIR}" "${REV}" > "${METRICS_JSON}" || true
+        rc=0
+        python3 ./.github/quartus_metrics.py compare "${BASE_JSON}" "${METRICS_JSON}" --margin-ns "${TMARGIN}" --risk-floor-ns "${TRISK}" || rc=$?
+        cur="$(python3 ./.github/quartus_metrics.py worst "${METRICS_JSON}")" || cur="nan"
+        # Only a VERIFIED compare counts as recovery: 0 = clean, 4 = ALM-only
+        # (both mean no timing regression on this seed). rc=3 = still regressed;
+        # rc=1/2 = compare could not run (crash / usage) → unverified, so do NOT
+        # treat it as recovered — keep retrying and ultimately fail closed.
+        if (( rc == 0 || rc == 4 )); then
+            echo "SEED ${seed} closed the timing regression on ${REV} (worst setup slack ${cur}ns)."
+            # Promote the recovering build UNCONDITIONALLY — it is the one we ship.
+            # Its worst_setup can be <= an earlier still-regressed seed's (the
+            # binding path may be a clock that was never the regression), so a
+            # best_slack-gated promote would silently ship the regressed build.
+            cp "${COMPILATION_OUTPUT[i]}" "/tmp/${MKEY}.db9best.rbf"
+            cp "${METRICS_JSON}" "/tmp/${MKEY}.db9best.json"
+            recovered=1
+            break
+        fi
+        # Still regressed: track the least-bad build for the UNSTABLE best-of-N
+        # fallback. A numeric slack always beats a no-data ('nan') incumbent.
+        if [[ "${cur}" != "nan" ]] \
+           && { [[ "${best_slack}" == "nan" ]] || awk "BEGIN{exit !(${cur} > ${best_slack})}" 2>/dev/null; }; then
+            best_slack="${cur}"
+            cp "${COMPILATION_OUTPUT[i]}" "/tmp/${MKEY}.db9best.rbf"
+            cp "${METRICS_JSON}" "/tmp/${MKEY}.db9best.json"
+        fi
+    done
+    mv -f "${QSF}.db9orig" "${QSF}"   # restore (workspace is discarded anyway)
+    mkdir -p "${OUTDIR}"              # a failed final seed left OUTDIR rm'd; recreate for the cp
+    cp "/tmp/${MKEY}.db9best.rbf" "${COMPILATION_OUTPUT[i]}"
+    cp "/tmp/${MKEY}.db9best.json" "${METRICS_JSON}"
+    if (( ! recovered )); then
+        echo "::warning::No SEED within ${SEED_MAX} attempts closed the timing regression on ${REV} (best worst-setup ${best_slack}ns)."
+        _db9_timing_fail
+    fi
+}
+
+# Compare the fresh build against the fetched baseline and dispatch.
+_db9_seed_gate() {
+    local rc=0
+    python3 ./.github/quartus_metrics.py compare "${BASE_JSON}" "${METRICS_JSON}" --margin-ns "${TMARGIN}" --risk-floor-ns "${TRISK}" || rc=$?
+    case "${rc}" in
+        3)  # timing regression — reseed if we can, else apply policy
+            if (( SEED_MAX > 0 )) && [[ -f "${QSF}" ]]; then
+                _db9_reseed_loop
+            else
+                echo "::warning::Timing regression on ${REV} but reseed unavailable (SEED_MAX=${SEED_MAX}, qsf=${QSF})."
+                _db9_timing_fail
+            fi
+            ;;
+        4)  # ALM-only regression — warn, never retry (reseed won't move synth ALMs)
+            ./.github/notify_error.sh "${LABEL} ALM REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
+            ;;
+        *)  : ;;  # 0 = clean; anything else = couldn't compare, don't block
+    esac
 }
 
 build_cores() {
@@ -157,14 +266,58 @@ build_cores() {
         export LD_PRELOAD=\"\${LD_PRELOAD:-\$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)}\"
         exec \"\${QNH}/quartus/bin/quartus_sh\" --flow compile \"\${QIN}\""
 
+        # attempt 0: unmodified qsf — byte-identical to the pre-gate build
         "${QRT_RUN[@]}" bash -c "${QRT_CMD}" || _notify_build_fail
 
         if [[ ! -f "${COMPILATION_OUTPUT[i]}" ]]; then
             echo "::error::Build succeeded but ${COMPILATION_OUTPUT[i]} missing"
             exit 1
         fi
+
+        # Timing/ALM regression gate + SEED retry. Parse this build's metrics,
+        # fetch the last good build's baseline; on a timing regression reseed the
+        # fitter (full recompile) to recover. Happy path adds only one gh
+        # download + a cheap parse — zero extra compiles unless a regression hits.
+        # REV   = Quartus revision = RBF / .qsf / report basename.
+        # QDIR  = dir the project tree lives in ("." for root cores, e.g.
+        #         "quartus" for subdir-qpf cores like Arcade-Cave) — the .qsf and
+        #         db/incremental_db sit here, NOT necessarily at the repo root.
+        # MKEY  = per-variant asset key. Keep it distinct across sibling variants
+        #         that share one revision/output: the three GBA variants all emit
+        #         output_files/GBA.rbf but have distinct CORE_NAME, so keying the
+        #         <key>_db9_metrics.json baseline on REV would collide on the
+        #         shared unstable-builds release. CORE_NAME (= RELEASE_CORE_NAME)
+        #         is unique per variant; for normal cores it equals REV.
+        local REV QDIR OUTDIR QSF MKEY METRICS_JSON BASE_JSON
+        REV="${COMPILATION_OUTPUT[i]##*/}"; REV="${REV%.*}"
+        OUTDIR="$(dirname "${COMPILATION_OUTPUT[i]}")"
+        QDIR="$(dirname "${OUTDIR}")"
+        QSF="${QDIR}/${REV}.qsf"
+        MKEY="${CORE_NAME[i]}"
+        METRICS_JSON="/tmp/${MKEY}_db9_metrics.json"
+        BASE_JSON="/tmp/${MKEY}_db9_baseline.json"
+        local SEED_MAX="${SEED_RETRY_MAX:-2}" TMARGIN="${TIMING_MARGIN_NS:-0.5}" TRISK="${TIMING_RISK_FLOOR_NS:-1.0}"
+
+        python3 ./.github/quartus_metrics.py parse "${OUTDIR}" "${REV}" > "${METRICS_JSON}" || true
+
+        # ALM-utilization advisory (level, not delta): high utilization marks a
+        # core as fitter-seed-sensitive — some seeds ship a glitch, some don't,
+        # with no STA signal to tell them apart. Warn so a maintainer pins a
+        # runtime-verified SEED. Advisory only — never blocks, reseeds, or emails.
+        local UTIL_PCT UTIL_WARN="${ALM_UTIL_WARN_PCT:-80}"
+        UTIL_PCT="$(python3 ./.github/quartus_metrics.py util "${METRICS_JSON}" 2>/dev/null)" || UTIL_PCT="nan"
+        if [[ "${UTIL_PCT}" != "nan" ]] && awk "BEGIN{exit !(${UTIL_PCT} >= ${UTIL_WARN})}" 2>/dev/null; then
+            echo "::warning::${CORE_NAME[i]} ALM utilization ${UTIL_PCT}% >= ${UTIL_WARN}% — fitter-seed-sensitive; pin a runtime-verified SEED in the committed qsf."
+        fi
+
+        if fetch_prior_metrics "${LABEL}" "${MKEY}" "${BASE_JSON}"; then
+            _db9_seed_gate
+        fi
+
         cp "${COMPILATION_OUTPUT[i]}" "/tmp/${RBF_NAME}"
-        UPLOAD_FILES+=("/tmp/${RBF_NAME}")
+        # Stage the chosen build's metrics next to the RBF; the publishers'
+        # `dist/*` glob ships it as the <core>_db9_metrics.json baseline asset.
+        UPLOAD_FILES+=("/tmp/${RBF_NAME}" "${METRICS_JSON}")
     done
 }
 
