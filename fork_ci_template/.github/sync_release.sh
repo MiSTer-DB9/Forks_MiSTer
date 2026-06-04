@@ -74,7 +74,23 @@ ORIGINAL_HEAD=$(git rev-parse --verify HEAD) || {
 }
 
 mkdir -p ".git/rr-cache" || true
-git rev-list --parents "HEAD" |
+
+# Also replay the per-variant unstable branch's merge resolutions. A conflict
+# resolved on the unstable canary lives on origin/unstable/${MAIN_BRANCH}, which
+# is never merged back into ${MAIN_BRANCH}, so the HEAD-only walk above cannot
+# see it — a one-time structural conflict resolved on unstable would otherwise
+# recur unresolved on stable when the same upstream commit syncs here. Seed
+# rerere from the canary's resolution too. `^HEAD` bounds the extra walk to the
+# unstable-only commits; a missing/unfetchable unstable branch is a no-op.
+UNSTABLE_TRAIN_REF=""
+if git fetch --no-tags origin "unstable/${MAIN_BRANCH}:refs/remotes/origin/unstable/${MAIN_BRANCH}" 2>/dev/null &&
+   git rev-parse --verify -q "refs/remotes/origin/unstable/${MAIN_BRANCH}" >/dev/null; then
+	UNSTABLE_TRAIN_REF="refs/remotes/origin/unstable/${MAIN_BRANCH} ^HEAD"
+fi
+{
+	git rev-list --parents "HEAD"
+	if [ -n "${UNSTABLE_TRAIN_REF}" ]; then git rev-list --parents ${UNSTABLE_TRAIN_REF}; fi
+} |
 while read commit parent1 other_parents
 do
 	if test -z "${other_parents}"
