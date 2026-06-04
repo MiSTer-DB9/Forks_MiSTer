@@ -195,6 +195,20 @@ localparam [15:0] DB15_DISABLE_DEBOUNCE = 16'd49999;   // ~1 ms
 localparam [19:0] DB15_RECOVER_DELAY    = 20'd999999;  // ~10 ms
 localparam [19:0] DB15_ARM_DELAY        = 20'd999999;  // ~10 ms (post-swap mask)
 
+// jotego JTFRAME_SDRAM96 cores clock this wrapper at 96 MHz (clk_sys), ~2x the
+// 40-50 MHz baseline these debounce/probe windows were tuned for. These are all
+// level-threshold counters ("count to N, then act"), so a divide-by-2 clock
+// enable on the count steps restores the wall-clock windows (~1 ms debounce
+// plus the Saturn probe/settle delays) without touching the constants or widths.
+// db9_cen is constant-1 on the 40-50 MHz path (no behaviour change there).
+`ifdef JTFRAME_SDRAM96
+reg  db9_cen_div = 1'b0;
+always @(posedge clk) db9_cen_div <= ~db9_cen_div;
+wire db9_cen = db9_cen_div;
+`else
+wire db9_cen = 1'b1;
+`endif
+
 wire db9_status              = db9md_ena ? 1'b1 : USER_IN[7];
 wire db15_idle               = ~(|JOYDB15_1[11:0] | |JOYDB15_2[11:0]);
 wire db9md_detect_low        = ~db9md_ena & ~db9_status;
@@ -231,12 +245,12 @@ always @(posedge clk) begin
         db15_arm_delay_cnt <= 20'd0;
     end
     else begin
-        if (db15_arm_delay_cnt != 20'd0) db15_arm_delay_cnt <= db15_arm_delay_cnt - 1'd1;
+        if (db9_cen && db15_arm_delay_cnt != 20'd0) db15_arm_delay_cnt <= db15_arm_delay_cnt - 1'd1;
 
         // DB9MD physical removal: D1=D0=0 signature missing for ~10 ms → drop.
         if (db9md_ena) begin
             if (db9md_present_signature) db9md_absent_cnt <= 20'd0;
-            else if (db9md_absent_cnt < DB9MD_ABSENT_DELAY) db9md_absent_cnt <= db9md_absent_cnt + 1'b1;
+            else if (db9md_absent_cnt < DB9MD_ABSENT_DELAY) begin if (db9_cen) db9md_absent_cnt <= db9md_absent_cnt + 1'b1; end
             else begin
                 db9md_ena    <= 1'b0;
                 db15_disable <= 1'b0;
@@ -250,7 +264,7 @@ always @(posedge clk) begin
         // Saturn phases and the post-swap recovery window.
         if (db9md_detect_low) begin
             if (db9md_debounce_active) begin
-                if (db9md_lo_cnt < DB9MD_DEBOUNCE) db9md_lo_cnt <= db9md_lo_cnt + 1'b1;
+                if (db9md_lo_cnt < DB9MD_DEBOUNCE) begin if (db9_cen) db9md_lo_cnt <= db9md_lo_cnt + 1'b1; end
                 else                                db9md_ena    <= 1'b1;
             end
             else begin
@@ -266,11 +280,11 @@ always @(posedge clk) begin
             db15_disable_cnt <= 16'd0;
         end
         else if (!db15_disable) begin
-            if (db15_disable_cnt < DB15_DISABLE_DEBOUNCE) db15_disable_cnt <= db15_disable_cnt + 1'b1;
+            if (db15_disable_cnt < DB15_DISABLE_DEBOUNCE) begin if (db9_cen) db15_disable_cnt <= db15_disable_cnt + 1'b1; end
             else                                          db15_disable     <= 1'b1;
         end
         if (db15_disable & ~saturn_any & ~db9md_ena & ~db15_disable_pins_low) begin
-            if (db15_recover_cnt < DB15_RECOVER_DELAY) db15_recover_cnt <= db15_recover_cnt + 1'b1;
+            if (db15_recover_cnt < DB15_RECOVER_DELAY) begin if (db9_cen) db15_recover_cnt <= db15_recover_cnt + 1'b1; end
             else begin
                 db15_disable     <= 1'b0;
                 db15_recover_cnt <= 20'd0;
@@ -312,7 +326,7 @@ always @(posedge clk) begin
                 saturn_cycle_cnt <= 2'd0;
             end
             else if (saturn_probe_cnt < 20'd499999) begin
-                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+                if (db9_cen) saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
             end
             else begin
                 saturn_probe     <= 1'b0;
@@ -322,7 +336,7 @@ always @(posedge clk) begin
         end
         else if (saturn_settle) begin
             if (saturn_probe_cnt < 20'd999999) begin
-                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+                if (db9_cen) saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
             end
             else begin
                 saturn_settle    <= 1'b0;
@@ -341,7 +355,7 @@ always @(posedge clk) begin
         end
         else if (~db9md_ena & db15_idle) begin
             if (saturn_probe_cnt < 20'd999999) begin
-                saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
+                if (db9_cen) saturn_probe_cnt <= saturn_probe_cnt + 1'd1;
             end
             else begin
                 saturn_probe_cnt <= 20'd0;

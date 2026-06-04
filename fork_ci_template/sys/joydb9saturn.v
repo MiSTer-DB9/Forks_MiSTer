@@ -57,14 +57,24 @@ module joy_db9saturn (
 // Each phase step is ~5.12us at 50MHz. SET->WAIT->GET gives ~10.24us
 // between a line change and the sample, which matches the Saturn core's
 // SMPC PORT_DELAY of 41-42 ticks at 4MHz (~10.25-10.50us).
-reg [7:0] delay = 8'd0;
-always @(posedge clk) delay <= delay + 1'd1;
-
+//
 // Single-cycle tick equivalent to the legacy `negedge delay[7]` derived
 // clock — fires the cycle delay[7] would have transitioned 1->0, i.e. when
 // the counter wraps to 0. Body executes one clk cycle after the original
 // derived edge (~20 ns at 50 MHz, vs the ~5.12 us phase step).
-wire d7_fall = (delay == 8'd0);
+//
+// jotego JTFRAME_SDRAM96 cores clock this module at 96 MHz (clk_sys). Widening
+// `delay` by one bit there doubles the wrap period so each phase stays ~5.12 us
+// (512 cyc / 96 MHz = 5.33 us) and SET->GET stays ~10.5 us, in spec for SMPC
+// PORT_DELAY. Without this the phases halve and the probe samples too early.
+`ifdef JTFRAME_SDRAM96
+localparam DLY_W = 9;   // 96 MHz: 512-cyc wrap holds each phase at ~5.33 us
+`else
+localparam DLY_W = 8;   // 40-50 MHz baseline: 256-cyc wrap, ~5.12 us
+`endif
+reg [DLY_W-1:0] delay = 0;
+always @(posedge clk) delay <= delay + 1'd1;
+wire d7_fall = (delay == 0);
 
 localparam [3:0]  PAD_ID_DIGITAL = 4'hB;  // standard 6-button Saturn pad
 localparam [3:0]  PAD_ID_ANALOG  = 4'h5;  // 3D Control Pad in analog switch position

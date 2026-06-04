@@ -47,23 +47,33 @@ reg joy1_md_thisscan = 1'b0, joy2_md_thisscan = 1'b0;
 reg [7:0] joy1_chord_cnt = 8'd0, joy2_chord_cnt = 8'd0;
 reg joy1_mode_inject = 1'b0, joy2_mode_inject = 1'b0;
 
-reg [7:0] delay = 8'd0;
-
-always @(posedge clk) begin
-    delay <= delay + 1'd1;
-end
-
 // Single-cycle ticks replace the legacy `posedge|negedge delay[N]` derived
-// clocks. `delay` cycles 0..255 on every clk; the tick conditions fire at the
+// clocks. `delay` free-runs on every clk; the tick conditions fire at the
 // same counter values where the original bit-edges occurred:
 //   delay[5] 0->1 (was `posedge delay[5]`)  : delay[5:0] == 32
 //   delay[5] 1->0 (was `negedge delay[5]`)  : delay[5:0] == 0
 //   delay[7] 1->0 (was `negedge delay[7]`)  : delay      == 0
 // Bodies execute one clk cycle after the original derived edge — negligible
 // vs the /64 (~1.28 us) and /256 (~5.12 us) protocol intervals at 50 MHz.
+//
+// jotego JTFRAME_SDRAM96 cores clock this module at 96 MHz (clk_sys), not the
+// 40-50 MHz baseline. Widening `delay` by one bit there doubles every tick
+// period so each d7_fall stays ~5.12 us (512 cyc / 96 MHz = 5.33 us) and the
+// SCAN_LEN=384 scan stays ~2 ms > the pad's ~1.624 ms reset timeout. Without
+// this the 96 MHz scan collapses to ~0.98 ms and the 6-btn flag flickers.
+`ifdef JTFRAME_SDRAM96
+reg [8:0] delay = 9'd0;
+always @(posedge clk) delay <= delay + 1'd1;
+wire d5_rise = (delay[6:0] == 7'd64);
+wire d5_fall = (delay[6:0] == 7'd0);
+wire d7_fall = (delay      == 9'd0);
+`else
+reg [7:0] delay = 8'd0;
+always @(posedge clk) delay <= delay + 1'd1;
 wire d5_rise = (delay[5:0] == 6'd32);
 wire d5_fall = (delay[5:0] == 6'd0);
 wire d7_fall = (delay      == 8'd0);
+`endif
 
 always @(posedge clk) begin
     if (d5_rise) begin
