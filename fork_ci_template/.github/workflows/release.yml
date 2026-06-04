@@ -150,7 +150,8 @@ jobs:
     - name: Build stable RBF leg
       run: ./.github/release_build.sh '${{ matrix.core }}' '${{ matrix.input }}' '${{ matrix.output }}' '${{ needs.preflight.outputs.date_stamp }}' '${{ needs.preflight.outputs.build_sha }}' -- <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

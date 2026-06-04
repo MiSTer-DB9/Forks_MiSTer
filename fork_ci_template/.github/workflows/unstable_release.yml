@@ -45,7 +45,8 @@ jobs:
       id: preflight
       run: ./.github/unstable_preflight.sh <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # Defence-in-depth safety net: setup_cicd.sh routes COMPILATION_INPUT=make
@@ -80,7 +81,8 @@ jobs:
       id: merge
       run: ./.github/unstable_merge.sh <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
@@ -125,7 +127,8 @@ jobs:
     - name: Build unstable RBF leg
       run: ./.github/unstable_build.sh '${{ matrix.core }}' '${{ matrix.input }}' '${{ matrix.output }}' '${{ needs.preflight.outputs.timestamp }}' '${{ needs.preflight.outputs.upstream_sha }}' -- <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         QUARTUS_NATIVE_VERSION: ${{ steps.mode.outputs.version }}
         QUARTUS_NATIVE_HOME: ${{ env.QUARTUS_NATIVE_HOME }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -118,7 +118,8 @@ jobs:
     - name: Build stable binary
       run: ./.github/make_build.sh STABLE '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>' '${{ needs.preflight.outputs.date_stamp }}' '${{ needs.preflight.outputs.build_sha }}' -- <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}

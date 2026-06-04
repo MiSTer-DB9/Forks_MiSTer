@@ -36,7 +36,8 @@ jobs:
       id: preflight
       run: ./.github/unstable_preflight.sh <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Merge upstream HEAD (once, pre fan-out)
@@ -44,7 +45,8 @@ jobs:
       id: merge
       run: ./.github/unstable_merge.sh <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
@@ -77,7 +79,8 @@ jobs:
     - name: Build unstable binary
       run: ./.github/make_build.sh UNSTABLE '<<RELEASE_CORE_NAME>>' '<<COMPILATION_INPUT>>' '<<COMPILATION_OUTPUT>>' '${{ needs.preflight.outputs.timestamp }}' '${{ needs.preflight.outputs.upstream_sha }}' -- <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
 

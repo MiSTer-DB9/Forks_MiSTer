@@ -31,7 +31,8 @@ jobs:
     - name: Sync with upstream
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:
-        NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         # POST workflow_dispatch to release.yml after the merge push — default
         # GITHUB_TOKEN pushes don't trigger downstream workflows (GH loop guard),
         # but the workflow_dispatch *API* authenticated with GITHUB_TOKEN does.
