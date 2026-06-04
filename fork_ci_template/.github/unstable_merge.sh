@@ -61,13 +61,35 @@ echo
 # regressions the upstream merge introduced. Best-effort — never blocks.
 ./.github/merge_validate.sh baseline . || true
 
+# Re-assert the rerere/merge policy here too (defence-in-depth — preflight sets
+# these globals, but the finalize below depends on rerere.autoupdate, so don't
+# rely on a sibling script's side effect). Without autoupdate a fully
+# rerere-resolved merge stays unmerged in the index → false "UNSTABLE MERGE
+# CONFLICT" alarm.
+configure_rerere
+
 # Merge upstream HEAD into unstable. On conflict, notify_error.sh emails the
 # maintainer + exits 1; the unstable branch stays at the catchup-only state, so
 # a partial merge never lands on origin. Maintainer resolves manually; the next
 # run's rerere training walks that resolution and auto-replays it.
-git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
-    -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}" \
-    || ./.github/notify_error.sh "UNSTABLE MERGE CONFLICT" "$@"
+# `git merge` exits non-zero after ANY conflict — including when rerere
+# auto-resolved and staged every one (autoupdate), in which case --no-ff did not
+# create the merge commit (merge stops on conflict). Finalize that commit ONLY
+# when the merge actually started and rerere resolved everything: MERGE_HEAD set
+# AND no unmerged paths. Otherwise — real leftover conflicts (unmerged paths) OR
+# a non-conflict failure with no MERGE_HEAD (unrelated histories, dirty/locked
+# tree, bad ref) — notify + abort, so we never run `git commit` with no
+# MERGE_HEAD and fabricate a bogus single-parent commit mislabeled as a merge
+# (which would corrupt the merge ancestry rerere training walks and push a fake
+# "merge" to origin/unstable).
+if ! git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
+    -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}"; then
+    if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || git ls-files --unmerged | grep -q .; then
+        ./.github/notify_error.sh "UNSTABLE MERGE CONFLICT" "$@"
+    fi
+    echo "rerere auto-resolved all conflicts; finalizing the unstable merge commit."
+    git commit --no-edit -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}"
+fi
 
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UNSTABLE STATUS BIT COLLISION" "$@"

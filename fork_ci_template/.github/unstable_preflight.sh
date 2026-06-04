@@ -26,6 +26,8 @@ source "${SCRIPT_DIR}/retry.sh"
 source "${SCRIPT_DIR}/compute_source_hash.sh"
 # shellcheck source=gha_emit.sh
 source "${SCRIPT_DIR}/gha_emit.sh"
+# shellcheck source=rerere_train.sh
+source "${SCRIPT_DIR}/rerere_train.sh"  # configure_rerere
 
 UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 MAIN_BRANCH="<<MAIN_BRANCH>>"
@@ -51,12 +53,9 @@ echo "Upstream HEAD @ ${UPSTREAM_BRANCH}: ${UPSTREAM_SHA}"
 export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
-git config --global rerere.enabled true
-# 2-way conflict markers (no base section) so rerere preimages are merge-base
-# independent — see sync_release.sh for the rationale. Must match the stable
-# pipeline's style so a resolution recorded on the unstable canary replays when
-# stable merges the same upstream change against a different merge-base.
-git config --global merge.conflictstyle merge
+# rerere/merge policy (enabled + 2-way conflictstyle + autoupdate) — see
+# rerere_train.sh::configure_rerere for the per-knob rationale.
+configure_rerere
 
 echo
 echo "Preparing unstable branch:"

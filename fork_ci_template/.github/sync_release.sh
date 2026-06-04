@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=retry.sh
 source "${SCRIPT_DIR}/retry.sh"
+# shellcheck source=rerere_train.sh
+source "${SCRIPT_DIR}/rerere_train.sh"  # configure_rerere
 
 UPSTREAM_REPO="<<UPSTREAM_REPO>>"
 CORE_NAME=(<<RELEASE_CORE_NAME>>)
@@ -45,14 +47,9 @@ done
 export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
-git config --global rerere.enabled true
-# 2-way conflict markers (no base section). rerere keys on the rendered conflict
-# text; a base-bearing style (diff3/zdiff3) bakes the merge-base into the
-# preimage, so a resolution recorded against the unstable branch's merge-base
-# would NOT match the stable merge's different base (master vs unstable reach the
-# upstream release via different ancestry) and rerere would miss. 2-way drops the
-# base → preimage = ours+theirs only → the canary resolution replays here.
-git config --global merge.conflictstyle merge
+# rerere/merge policy (enabled + 2-way conflictstyle + autoupdate) — see
+# rerere_train.sh::configure_rerere for the per-knob rationale.
+configure_rerere
 
 echo
 echo "Syncing with upstream:"
@@ -136,7 +133,22 @@ echo
 # a bad baseline must never block the sync).
 ./.github/merge_validate.sh baseline . || true
 
-git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}" || ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
+# `git merge` exits non-zero after ANY conflict — even when rerere auto-resolved
+# and staged every one (autoupdate). A non-zero exit is safe to proceed past ONLY
+# when the merge actually started and rerere resolved everything: MERGE_HEAD is
+# set AND no unmerged paths remain (the `git commit` further below then lands the
+# merge). Otherwise — real leftover conflicts (unmerged paths) OR a non-conflict
+# failure that never started the merge so MERGE_HEAD is absent (unrelated
+# histories, dirty/locked tree, empty/invalid COMMIT_TO_MERGE) — alert + abort,
+# exactly as the old `|| notify_error` did. Checking unmerged paths alone would
+# silently swallow those non-conflict failures and let the run commit a tree that
+# never integrated upstream.
+if ! git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}"; then
+    if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || git ls-files --unmerged | grep -q .; then
+        ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
+    fi
+    echo "rerere auto-resolved all conflicts in the upstream merge; proceeding."
+fi
 
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"

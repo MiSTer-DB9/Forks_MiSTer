@@ -11,6 +11,25 @@
 # Expects to be called from the fork checkout root, on the branch we intend
 # to merge into.
 
+# Single owner of this fork's rerere/merge policy — called by every script that
+# trains rerere or merges upstream (sync_release.sh, unstable_preflight.sh,
+# unstable_merge.sh) so the three knobs can't drift apart per script.
+configure_rerere() {
+    git config --global rerere.enabled true
+    # 2-way conflict markers (no base section). rerere keys on the rendered
+    # conflict text; a base-bearing style (diff3/zdiff3) bakes the merge-base into
+    # the preimage, so a resolution recorded against the unstable branch's
+    # merge-base would NOT match the stable merge's different base (master vs
+    # unstable reach the upstream release via different ancestry) and rerere would
+    # miss. 2-way drops the base → preimage = ours+theirs only → the canary
+    # resolution recorded on unstable replays on the stable merge.
+    git config --global merge.conflictstyle merge
+    # Stage rerere's auto-applied resolutions. Without autoupdate they are written
+    # to the working tree but left UNMERGED in the index, so the merge still
+    # reports failure and the commit cannot proceed.
+    git config --global rerere.autoupdate true
+}
+
 train_rerere() {
     local ORIGINAL_BRANCH ORIGINAL_HEAD
     ORIGINAL_BRANCH=$(git symbolic-ref -q HEAD) ||
