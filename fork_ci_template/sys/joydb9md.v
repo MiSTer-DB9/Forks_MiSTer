@@ -21,7 +21,16 @@ module joy_db9md(
     output joy2_is_6btn
 );
 
-reg [7:0]state = 8'd0;
+// Scan length in d7_fall ticks (5.12 us each @ 50 MHz). States 0..6 do the
+// active 6-btn probe; the remaining ticks hold joyMDsel high (idle). A real
+// 6-button pad only resets its internal cycle counter when SEL/TH is held high
+// longer than its internal timeout (~1.624 ms, per MegaDrive SNAC pad_io.sv).
+// SCAN_LEN=384 -> ~1.97 ms scan, ~1.93 ms idle, comfortably above that timeout
+// so the pad counter resets before every scan and the state-5 handshake read
+// (joy_in[3:0]==0) is deterministic. A shorter idle let long-timeout pads drift
+// out of phase -> the 6-btn flag flickered scan-to-scan on some controllers.
+localparam [8:0] SCAN_LEN = 9'd384;
+reg [8:0] state = 9'd0;
 reg joy1_6btn = 1'b0, joy2_6btn = 1'b0;
 reg joy1_6btn_lat = 1'b0, joy2_6btn_lat = 1'b0;
 reg [11:0] joyMDdat1 = 12'hFFF, joyMDdat2 = 12'hFFF;
@@ -33,7 +42,7 @@ reg joySplit = 1'b1;
 // button on a 3-button Megadrive pad. Gated by per-scan classification
 // (MD-not-MS AND not 6-button) and debounced; Start and B are consumed
 // while active so the game does not see Pause+B alongside Mode.
-localparam [7:0] CHORD_DEBOUNCE = 8'd80;  // ~105 ms at ~1.31 ms/scan
+localparam [7:0] CHORD_DEBOUNCE = 8'd53;  // ~105 ms at ~1.97 ms/scan
 reg joy1_md_thisscan = 1'b0, joy2_md_thisscan = 1'b0;
 reg [7:0] joy1_chord_cnt = 8'd0, joy2_chord_cnt = 8'd0;
 reg joy1_mode_inject = 1'b0, joy2_mode_inject = 1'b0;
@@ -72,17 +81,18 @@ always @(posedge clk) begin
 
     // Joystick Management
     if (d7_fall) begin
-        state <= state + 1;
+        if (state == SCAN_LEN - 1'd1) state <= 9'd0;
+        else                          state <= state + 1'd1;
         case (state)        //-- joy_s format MXYZ SACB UDLR
-            8'd0: begin
+            9'd0: begin
                 joyMDsel <= 1'b0;
             end
 
-            8'd1: begin
+            9'd1: begin
                 joyMDsel <= 1'b1;
             end
 
-            8'd2: begin
+            9'd2: begin
                 joyMDdat1[5:0] <= joy1_in[5:0]; //-- CBUDLR
                 joyMDdat2[5:0] <= joy2_in[5:0]; //-- CBUDLR
                 joyMDsel <= 1'b0;
@@ -92,7 +102,7 @@ always @(posedge clk) begin
                 joy2_md_thisscan <= 1'b0;
             end
 
-            8'd3: begin // Si derecha e Izda es 0 es un mando de megadrive
+            9'd3: begin // Si derecha e Izda es 0 es un mando de megadrive
                 if (joy1_in[1:0] == 2'b00) begin
                     joyMDdat1[7:6] <= joy1_in[5:4]; // -- Start, A
                     joy1_md_thisscan <= 1'b1;
@@ -110,11 +120,11 @@ always @(posedge clk) begin
                 joyMDsel <= 1'b1;
             end
 
-            8'd4: begin
+            9'd4: begin
                 joyMDsel <= 1'b0;
             end
 
-            8'd5: begin
+            9'd5: begin
                 if (joy1_in[3:0] == 4'b000) begin
                     joy1_6btn <= 1'b1; // -- It's a six button
                 end
@@ -124,7 +134,7 @@ always @(posedge clk) begin
                 joyMDsel <= 1'b1;
             end
 
-            8'd6: begin
+            9'd6: begin
                 if (joy1_6btn == 1'b1) begin
                     joyMDdat1[11:8] <= joy1_in[4:0]; // -- Mode, X, Y e Z
                 end
