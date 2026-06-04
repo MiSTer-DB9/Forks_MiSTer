@@ -46,6 +46,13 @@ export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
 git config --global rerere.enabled true
+# 2-way conflict markers (no base section). rerere keys on the rendered conflict
+# text; a base-bearing style (diff3/zdiff3) bakes the merge-base into the
+# preimage, so a resolution recorded against the unstable branch's merge-base
+# would NOT match the stable merge's different base (master vs unstable reach the
+# upstream release via different ancestry) and rerere would miss. 2-way drops the
+# base → preimage = ours+theirs only → the canary resolution replays here.
+git config --global merge.conflictstyle merge
 
 echo
 echo "Syncing with upstream:"

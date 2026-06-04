@@ -52,6 +52,11 @@ export GIT_MERGE_AUTOEDIT=no
 git config --global user.email "theypsilon@gmail.com"
 git config --global user.name "The CI/CD Bot"
 git config --global rerere.enabled true
+# 2-way conflict markers (no base section) so rerere preimages are merge-base
+# independent — see sync_release.sh for the rationale. Must match the stable
+# pipeline's style so a resolution recorded on the unstable canary replays when
+# stable merges the same upstream change against a different merge-base.
+git config --global merge.conflictstyle merge
 
 echo
 echo "Preparing unstable branch:"
