@@ -19,6 +19,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # Workflows-capable token (PAT/App with Workflows:write) so the
+        # sync_release.sh `git push origin <MAIN_BRANCH>` can carry an
+        # upstream `.github/workflows/*` diff (many MiSTer-devel cores ship
+        # their own build.yml). The default GITHUB_TOKEN is structurally
+        # forbidden from updating workflow files. Same org secret as unstable.
+        token: ${{ secrets.REPOSITORY_DISPATCH_TOKEN }}
 
     # merge_validate.sh's coresv_lint gate prefers verilator (Quartus-complete
     # SV grammar -> true syntax oracle on the post-merge <core>.sv; iverilog's

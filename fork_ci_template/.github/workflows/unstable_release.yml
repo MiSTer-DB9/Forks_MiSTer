@@ -40,6 +40,13 @@ jobs:
         # unstable_preflight.sh fetches upstream + checks out the
         # unstable/<branch> ref before unstable_merge.sh resumes.
         fetch-depth: 0
+        # Workflows-capable token (PAT/App with Workflows:write) so the
+        # unstable_merge.sh `git push origin unstable/<branch>` can carry
+        # `.github/workflows/*` diffs picked up from the master catch-up
+        # merge. The default GITHUB_TOKEN (github-actions App) is
+        # structurally forbidden from updating workflow files. Scoped to
+        # this preflight job only; the build job checkout keeps GITHUB_TOKEN.
+        token: ${{ secrets.REPOSITORY_DISPATCH_TOKEN }}
 
     - name: Pre-flight skip check
       id: preflight
