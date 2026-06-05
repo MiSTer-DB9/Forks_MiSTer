@@ -80,3 +80,83 @@ for b in order:
 sys.stdout.write("\n".join(out).rstrip() + "\n")
 PY
 }
+
+# Record a FAILED upstream merge (conflict) against this variant's stanza so the
+# dispatcher (sync_dispatch.sh::_check_unstable) cools down and stops re-firing
+# notify_error.sh on every cron tick. Unlike write_release_body this is purely
+# additive: it preserves the existing last_unstable_* identity SHAs (the last
+# GOOD build) and other stanzas, and only sets/replaces the last_failed_sha /
+# last_failed_master_sha pair. The dispatcher skips re-dispatch while BOTH the
+# upstream HEAD and the fork-master HEAD still equal this recorded (failed) pair;
+# if either moves the source genuinely changed and a retry is worthwhile.
+# A later SUCCESSFUL build calls write_release_body, which regenerates the stanza
+# WITHOUT these fields → the cooldown clears itself. No-op (warn) if the release
+# doesn't exist yet — nothing to cool down against, the next run creates it.
+record_unstable_failure() {
+    local failed_sha="$1" failed_master_sha="$2"
+    local existing_body
+    existing_body=$(gh release view "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body' 2>/dev/null || echo "")
+    if [[ -z "${existing_body}" ]]; then
+        echo >&2 "record_unstable_failure: no ${UNSTABLE_TAG} release body yet — skipping cooldown write"
+        return 0
+    fi
+    local new_body
+    new_body=$(FAILED_SHA="${failed_sha}" \
+        FAILED_MASTER_SHA="${failed_master_sha}" \
+        MAIN_BRANCH="${MAIN_BRANCH}" \
+        EXISTING_BODY="${existing_body}" \
+        python3 - <<'PY'
+import os, re, sys
+branch = os.environ["MAIN_BRANCH"]
+failed = os.environ["FAILED_SHA"]
+failed_master = os.environ["FAILED_MASTER_SHA"]
+body = os.environ.get("EXISTING_BODY", "")
+# Split header (pre-first-stanza text) + ordered stanzas, same shape as
+# write_release_body so the two stay format-compatible.
+header_lines, stanzas, order = [], {}, []
+current, buf, seen = None, [], False
+for line in body.splitlines():
+    m = re.match(r"^\[([^\]]+)\]\s*$", line)
+    if m:
+        seen = True
+        if current is not None:
+            stanzas[current] = buf
+            if current not in order: order.append(current)
+        current, buf = m.group(1), []
+    elif current is not None:
+        buf.append(line)
+    elif not seen:
+        header_lines.append(line)
+if current is not None:
+    stanzas[current] = buf
+    if current not in order: order.append(current)
+
+def set_failed(lines):
+    out = [l for l in lines
+           if not re.match(r"^last_failed_sha:", l)
+           and not re.match(r"^last_failed_master_sha:", l)]
+    while out and out[-1].strip() == "":
+        out.pop()
+    out.append(f"last_failed_sha:          {failed}")
+    out.append(f"last_failed_master_sha:   {failed_master}")
+    return out
+
+if branch in stanzas:
+    stanzas[branch] = set_failed(stanzas[branch])
+else:
+    order.append(branch)
+    stanzas[branch] = set_failed([])
+
+out = []
+hdr = "\n".join(header_lines).rstrip()
+if hdr:
+    out += [hdr, ""]
+for b in order:
+    out.append(f"[{b}]")
+    out.append("\n".join(stanzas[b]).rstrip())
+    out.append("")
+sys.stdout.write("\n".join(out).rstrip() + "\n")
+PY
+)
+    gh release edit "${UNSTABLE_TAG}" --repo "${GITHUB_REPOSITORY}" --notes "${new_body}"
+}

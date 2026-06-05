@@ -248,23 +248,23 @@ _check_unstable() {
         "https://${DISPATCH_USER}:${DISPATCH_TOKEN}@github.com/${OWNER}/${NAME}" \
         "refs/heads/${MAIN_BRANCH}" | awk '{print $1}' || echo "")
 
-    local RELEASE_JSON LAST_SHA LAST_MASTER_SHA LAST_FAILED_SHA
+    local RELEASE_JSON LAST_SHA LAST_MASTER_SHA LAST_FAILED_SHA LAST_FAILED_MASTER_SHA
     RELEASE_JSON=$(curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/repos/${OWNER}/${NAME}/releases/tags/${UNSTABLE_TAG}" 2>/dev/null || echo "")
     if [[ -n "${RELEASE_JSON}" ]]; then
-        { read -r LAST_SHA; read -r LAST_MASTER_SHA; read -r LAST_FAILED_SHA; } < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
+        { read -r LAST_SHA; read -r LAST_MASTER_SHA; read -r LAST_FAILED_SHA; read -r LAST_FAILED_MASTER_SHA; } < <(printf '%s' "${RELEASE_JSON}" | MAIN_BRANCH="${MAIN_BRANCH}" python3 -c '
 import json, sys, os, re
 try:
     body = json.load(sys.stdin).get("body","")
 except Exception:
-    print(); print(); print(); sys.exit(0)
+    print(); print(); print(); print(); sys.exit(0)
 branch = os.environ["MAIN_BRANCH"]
 pat = re.compile(rf"\[{re.escape(branch)}\]\s*\n(.*?)(?=\n\[|\Z)", re.DOTALL)
 m = pat.search(body)
 stanza = m.group(1) if m else ""
-for key in ("last_unstable_sha", "last_unstable_master_sha", "last_failed_sha"):
+for key in ("last_unstable_sha", "last_unstable_master_sha", "last_failed_sha", "last_failed_master_sha"):
     mm = re.search(rf"{key}:\s*([0-9a-f]{{7,40}})", stanza)
     print(mm.group(1) if mm else "")
 ')
@@ -272,6 +272,7 @@ for key in ("last_unstable_sha", "last_unstable_master_sha", "last_failed_sha"):
     LAST_SHA="${LAST_SHA:-}"
     LAST_MASTER_SHA="${LAST_MASTER_SHA:-}"
     LAST_FAILED_SHA="${LAST_FAILED_SHA:-}"
+    LAST_FAILED_MASTER_SHA="${LAST_FAILED_MASTER_SHA:-}"
 
     local UPSTREAM_CHANGED=0 MASTER_CHANGED=0
     [[ "${LAST_SHA}" != "${UPSTREAM_HEAD}" ]] && UPSTREAM_CHANGED=1
@@ -282,11 +283,18 @@ for key in ("last_unstable_sha", "last_unstable_master_sha", "last_failed_sha"):
         return 1
     fi
 
-    # Cooldown is upstream-keyed; it only blocks an upstream-only retry. A
-    # genuine downstream (sys/) change is new source → always worth a rebuild,
-    # even if the previous attempt for this upstream HEAD failed.
-    if (( ! MASTER_CHANGED )) && [[ -n "${LAST_FAILED_SHA}" && "${LAST_FAILED_SHA}" == "${UPSTREAM_HEAD}" ]]; then
-        echo "[${fork_name}] upstream HEAD ${UPSTREAM_HEAD:0:7} matches last_failed_sha — cooldown active, skipping"
+    # Failure cooldown. A previous run that failed (Quartus error OR upstream
+    # merge conflict — unstable_merge.sh's record_unstable_failure) stamps the
+    # failing (upstream, master) pair into last_failed_sha / last_failed_master_sha.
+    # Skip the redispatch while BOTH still match the current HEADs, so a merge
+    # conflict that can't auto-resolve doesn't re-fire notify_error every tick.
+    # A genuine source change — upstream HEAD moves, OR fork master moves to a
+    # commit other than the one that failed — clears the cooldown and retries.
+    # (last_failed_master_sha empty = legacy/compile-only record: fall back to
+    # the original upstream-keyed + !MASTER_CHANGED behaviour.)
+    if [[ -n "${LAST_FAILED_SHA}" && "${LAST_FAILED_SHA}" == "${UPSTREAM_HEAD}" ]] \
+       && { (( ! MASTER_CHANGED )) || [[ -n "${LAST_FAILED_MASTER_SHA}" && "${LAST_FAILED_MASTER_SHA}" == "${FORK_MASTER_HEAD}" ]]; }; then
+        echo "[${fork_name}] upstream ${UPSTREAM_HEAD:0:7} + master ${FORK_MASTER_HEAD:0:7} match last_failed pair — cooldown active, skipping"
         return 1
     fi
 

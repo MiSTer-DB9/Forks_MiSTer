@@ -85,7 +85,8 @@ UNSTABLE_BRANCH_SHA_BEFORE=$(git rev-parse HEAD)
 if ! git merge-base --is-ancestor "${MASTER_SHA}" HEAD; then
     git merge -Xignore-all-space --no-ff "${MASTER_SHA}" \
         -m "BOT: Unstable catchup with ${MAIN_BRANCH} @ ${MASTER_SHA:0:7}" \
-        || ./.github/notify_error.sh "UNSTABLE MASTER CATCHUP CONFLICT" "$@"
+        || { record_unstable_failure "${UPSTREAM_SHA}" "${MASTER_SHA}" || true; \
+             ./.github/notify_error.sh "UNSTABLE MASTER CATCHUP CONFLICT" "$@"; }
 fi
 
 # Cheap pre-check: if neither upstream's new commits, nor stable master's

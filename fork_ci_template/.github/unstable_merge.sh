@@ -85,6 +85,11 @@ configure_rerere
 if ! git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
     -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}"; then
     if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || git ls-files --unmerged | grep -q .; then
+        # Record the conflicting (upstream, master) pair so _check_unstable
+        # cools down — without this, every 12h tick re-dispatches the same
+        # upstream HEAD, re-hits the conflict, and re-fires notify_error. Best
+        # effort: never let a cooldown-write failure swallow the notify/abort.
+        record_unstable_failure "${UPSTREAM_SHA}" "${MASTER_SHA}" || true
         ./.github/notify_error.sh "UNSTABLE MERGE CONFLICT" "$@"
     fi
     echo "rerere auto-resolved all conflicts; finalizing the unstable merge commit."
