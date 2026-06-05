@@ -27,6 +27,38 @@ if [[ -z "${UPSTREAM_REPO}" ]]; then
     exit 0
 fi
 
+# Record a FAILED stable merge of an upstream release commit so the dispatcher
+# (sync_dispatch.sh::_check_stable) cools down and stops re-notifying every poll
+# while the same upstream release still can't be merged. Mirrors the unstable
+# channel's record_unstable_failure. There is no per-build release on a failed
+# sync (the run aborts before `gh release create`), so the marker is stamped
+# into the newest existing `stable/${MAIN_BRANCH}/` release body — the same body
+# _check_stable reads STORED_HEAD/STORED_RELEASE_SHA from. The next SUCCESSFUL
+# build creates a newer release without the field, so the cooldown self-clears.
+# Best-effort: never let a cooldown-write failure mask the notify/abort.
+record_stable_failure() {
+    local failed_release_sha="$1" tag body new_body
+    tag=$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,createdAt \
+            --jq "[.[] | select(.tagName | startswith(\"stable/${MAIN_BRANCH}/\"))] | sort_by(.createdAt) | reverse | .[0].tagName // empty" 2>/dev/null || echo "")
+    if [[ -z "${tag}" ]]; then
+        echo >&2 "record_stable_failure: no stable/${MAIN_BRANCH}/ release yet — skipping cooldown write"
+        return 0
+    fi
+    body=$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body' 2>/dev/null || echo "")
+    new_body=$(FAILED_RELEASE_SHA="${failed_release_sha}" EXISTING_BODY="${body}" python3 - <<'PY'
+import os, re, sys
+body = os.environ.get("EXISTING_BODY", "")
+failed = os.environ["FAILED_RELEASE_SHA"]
+lines = [l for l in body.splitlines() if not re.match(r"^last_failed_release_sha:", l)]
+while lines and lines[-1].strip() == "":
+    lines.pop()
+lines.append(f"last_failed_release_sha:  {failed}")
+sys.stdout.write("\n".join(lines).rstrip() + "\n")
+PY
+)
+    gh release edit "${tag}" --repo "${GITHUB_REPOSITORY}" --notes "${new_body}" || true
+}
+
 echo "Fetching upstream:"
 git remote remove upstream 2> /dev/null || true
 git remote add upstream "${UPSTREAM_REPO}"
@@ -145,18 +177,19 @@ echo
 # never integrated upstream.
 if ! git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}"; then
     if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || git ls-files --unmerged | grep -q .; then
+        record_stable_failure "${COMMIT_TO_MERGE}" || true
         ./.github/notify_error.sh "UPSTREAM MERGE CONFLICT" "$@"
     fi
     echo "rerere auto-resolved all conflicts in the upstream merge; proceeding."
 fi
 
 # status bit collision tripwire (fork-only)
-./.github/check_status_collision.sh || ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"
+./.github/check_status_collision.sh || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"; }
 
 # post-merge port-validation gate (fork-only; regression-only). Aborts before
 # the merge is committed/pushed to ${MAIN_BRANCH}, exactly like the collision
 # tripwire above.
-./.github/merge_validate.sh check . || ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"
+./.github/merge_validate.sh check . || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"; }
 
 git submodule update --init --recursive
 

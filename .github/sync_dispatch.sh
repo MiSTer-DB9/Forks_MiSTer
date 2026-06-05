@@ -129,7 +129,7 @@ _check_stable() {
     fi
 
     local TAG_PREFIX="stable/${MAIN_BRANCH}/"
-    local STORED_RELEASE_SHA="" STORED_HEAD=""
+    local STORED_RELEASE_SHA="" STORED_HEAD="" STORED_FAILED_RELEASE_SHA=""
     local RELEASE_JSON
     RELEASE_JSON=$(retry -- curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
@@ -160,6 +160,7 @@ if matched:
         if [[ -n "${RELEASE_BODY}" ]]; then
             STORED_RELEASE_SHA=$(sed -nE 's/^upstream_release_sha:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${RELEASE_BODY}" | head -1 || true)
             STORED_HEAD=$(sed -nE 's/^upstream_head_at_sync:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${RELEASE_BODY}" | head -1 || true)
+            STORED_FAILED_RELEASE_SHA=$(sed -nE 's/^last_failed_release_sha:[[:space:]]+([^[:space:]]+).*/\1/p' <<<"${RELEASE_BODY}" | head -1 || true)
         fi
     fi
 
@@ -196,6 +197,17 @@ if matched:
 
     if [[ -n "${STORED_RELEASE_SHA}" && "${STORED_RELEASE_SHA}" == "${CURRENT_RELEASE_SHA}" ]]; then
         echo "[${fork_name}] release commit unchanged (${CURRENT_RELEASE_SHA:0:7}) — skipping"
+        return 1
+    fi
+
+    # Failure cooldown (mirrors unstable): a prior sync that couldn't merge this
+    # upstream release commit (conflict / collision / port-validation) stamped it
+    # into last_failed_release_sha via sync_release.sh::record_stable_failure.
+    # Skip the redispatch while the current release commit still matches, so the
+    # abort doesn't re-fire notify_error every poll. Clears when upstream cuts a
+    # new release commit, or a later successful build writes a fresh release body.
+    if [[ -n "${STORED_FAILED_RELEASE_SHA}" && "${STORED_FAILED_RELEASE_SHA}" == "${CURRENT_RELEASE_SHA}" ]]; then
+        echo "[${fork_name}] release commit ${CURRENT_RELEASE_SHA:0:7} matches last_failed_release_sha — cooldown active, skipping"
         return 1
     fi
 
