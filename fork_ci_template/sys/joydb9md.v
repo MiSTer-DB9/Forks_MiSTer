@@ -56,24 +56,16 @@ reg joy1_mode_inject = 1'b0, joy2_mode_inject = 1'b0;
 // Bodies execute one clk cycle after the original derived edge — negligible
 // vs the /64 (~1.28 us) and /256 (~5.12 us) protocol intervals at 50 MHz.
 //
-// jotego JTFRAME_SDRAM96 cores clock this module at 96 MHz (clk_sys), not the
-// 40-50 MHz baseline. Widening `delay` by one bit there doubles every tick
-// period so each d7_fall stays ~5.12 us (512 cyc / 96 MHz = 5.33 us) and the
-// SCAN_LEN=384 scan stays ~2 ms > the pad's ~1.624 ms reset timeout. Without
-// this the 96 MHz scan collapses to ~0.98 ms and the 6-btn flag flickers.
-`ifdef JTFRAME_SDRAM96
-reg [8:0] delay = 9'd0;
-always @(posedge clk) delay <= delay + 1'd1;
-wire d5_rise = (delay[6:0] == 7'd64);
-wire d5_fall = (delay[6:0] == 7'd0);
-wire d7_fall = (delay      == 9'd0);
-`else
+// joydb is clocked at a fixed 40-50 MHz (CLK_JOY on the standalone DB9 cores;
+// clk_joy=CLK_50M on jt cores), so one baseline timing path covers every core --
+// no per-clock rescale. (The earlier JTFRAME_SDRAM96 delay-widen was removed once
+// jt cores moved joydb off the 24/48/96 MHz clk_sys onto a fixed CLK_50M, matching
+// the reference cores; clk_sys rescaling could not fix the octopod 2P-MUX demux.)
 reg [7:0] delay = 8'd0;
 always @(posedge clk) delay <= delay + 1'd1;
 wire d5_rise = (delay[5:0] == 6'd32);
 wire d5_fall = (delay[5:0] == 6'd0);
 wire d7_fall = (delay      == 8'd0);
-`endif
 
 always @(posedge clk) begin
     if (d5_rise) begin

@@ -195,19 +195,12 @@ localparam [15:0] DB15_DISABLE_DEBOUNCE = 16'd49999;   // ~1 ms
 localparam [19:0] DB15_RECOVER_DELAY    = 20'd999999;  // ~10 ms
 localparam [19:0] DB15_ARM_DELAY        = 20'd999999;  // ~10 ms (post-swap mask)
 
-// jotego JTFRAME_SDRAM96 cores clock this wrapper at 96 MHz (clk_sys), ~2x the
-// 40-50 MHz baseline these debounce/probe windows were tuned for. These are all
-// level-threshold counters ("count to N, then act"), so a divide-by-2 clock
-// enable on the count steps restores the wall-clock windows (~1 ms debounce
-// plus the Saturn probe/settle delays) without touching the constants or widths.
-// db9_cen is constant-1 on the 40-50 MHz path (no behaviour change there).
-`ifdef JTFRAME_SDRAM96
-reg  db9_cen_div = 1'b0;
-always @(posedge clk) db9_cen_div <= ~db9_cen_div;
-wire db9_cen = db9_cen_div;
-`else
+// joydb is clocked at a fixed 40-50 MHz (CLK_JOY / clk_joy=CLK_50M on jt cores),
+// so these debounce/probe counters count at their tuned wall-clock rate on every
+// core and db9_cen is a constant 1 (the `if(db9_cen)` count guards below are
+// no-ops). (The earlier JTFRAME_SDRAM96 divide-by-2 clock enable for a 96 MHz
+// clk_sys was removed once jt cores moved joydb onto a fixed CLK_50M.)
 wire db9_cen = 1'b1;
-`endif
 
 wire db9_status              = db9md_ena ? 1'b1 : USER_IN[7];
 wire db15_idle               = ~(|JOYDB15_1[11:0] | |JOYDB15_2[11:0]);
