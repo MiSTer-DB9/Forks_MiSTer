@@ -83,9 +83,10 @@ def _opt_bits(spec):
         lo = int(lo_s) if lo_s else hi
         return set(range(min(hi, lo), max(hi, lo) + 1))
     # Legacy letter form: strip the conditional-display flags
-    # (d/D/h/H/P followed by one digit), then the next char is the O/o option
-    # type, followed by one or two alphabet chars.
-    rest = re.sub(r"^(?:[dDhHP]\d)+", "", spec)
+    # (d/D/h/H/P followed by one base-32 status-bit index char 0-9/A-V — NOT
+    # just a digit: bits >= 10 are encoded as a letter, e.g. dA = disable-if-bit-10),
+    # then the next char is the O/o option type, followed by one or two alphabet chars.
+    rest = re.sub(r"^(?:[dDhHP][0-9A-V])+", "", spec)
     ml = re.match(r"([Oo])([0-9A-V])([0-9A-V])?", rest)
     if not ml:
         return None
