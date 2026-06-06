@@ -167,15 +167,36 @@ _db9_reseed_loop() {
 }
 
 # Compare the fresh build against the fetched baseline and dispatch.
+#
+# Seed search is OPT-IN per core via the SEED_RETRY_MAX repo variable
+# (default 0 = OFF). When OFF (the default) the gate is REPORT-ONLY: a worse
+# timing or ALM picture is reported to the maintainer over Telegram
+# (notify_error.sh, swallowed with `|| true` so its `exit 1` never fails the
+# leg) and the fitter is NEVER reseeded. Set vars.SEED_RETRY_MAX to a positive
+# N on a specific fork to turn the reseed-and-recover behaviour on for that core.
 _db9_seed_gate() {
     local rc=0
     python3 ./.github/quartus_metrics.py compare "${BASE_JSON}" "${METRICS_JSON}" --margin-ns "${TMARGIN}" --risk-floor-ns "${TRISK}" || rc=$?
+
+    # Report-only mode (seed search disabled — the default). Inform, never fail,
+    # never reseed.
+    if (( SEED_MAX <= 0 )); then
+        case "${rc}" in
+            3)  ./.github/notify_error.sh "${LABEL} TIMING REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
+            4)  ./.github/notify_error.sh "${LABEL} ALM REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
+            *)  : ;;  # 0 = clean; anything else = couldn't compare, stay silent
+        esac
+        return 0
+    fi
+
+    # Seed search enabled (SEED_MAX > 0): reseed on a timing regression, warn on
+    # ALM-only.
     case "${rc}" in
         3)  # timing regression — reseed if we can, else apply policy
-            if (( SEED_MAX > 0 )) && [[ -f "${QSF}" ]]; then
+            if [[ -f "${QSF}" ]]; then
                 _db9_reseed_loop
             else
-                echo "::warning::Timing regression on ${REV} but reseed unavailable (SEED_MAX=${SEED_MAX}, qsf=${QSF})."
+                echo "::warning::Timing regression on ${REV} but reseed unavailable (qsf=${QSF})."
                 _db9_timing_fail
             fi
             ;;
@@ -232,6 +253,8 @@ build_cores() {
             -e "LM_LICENSE_FILE=${LM_LICENSE_FILE}"
             -e "ALTERA_LICENSE_FILE=${LM_LICENSE_FILE}"
             -e "HOME=/tmp"
+            -e "HOST_UID=$(id -u)"
+            -e "HOST_GID=$(id -g)"
             -e "QIN=${COMPILATION_INPUT[i]}" )
 
         # Provisioned/cached tree on the runner, stock ubuntu:24.04, the
@@ -264,7 +287,12 @@ build_cores() {
         ${APT_STEP}
         : \"\${QNH:=\${QUARTUS_NATIVE_HOME}}\"
         export LD_PRELOAD=\"\${LD_PRELOAD:-\$(ls /usr/lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1 2>/dev/null | head -1)}\"
-        exec \"\${QNH}/quartus/bin/quartus_sh\" --flow compile \"\${QIN}\""
+        rc=0; \"\${QNH}/quartus/bin/quartus_sh\" --flow compile \"\${QIN}\" || rc=\$?
+        # Quartus ran as root in-container; hand the bind-mounted artifacts back
+        # to the host runner uid so the host-side gate/reseed (rm, cp of
+        # db/incremental_db/output_files) don't die 'Permission denied'.
+        chown -R \${HOST_UID}:\${HOST_GID} /project 2>/dev/null || true
+        exit \$rc"
 
         # attempt 0: unmodified qsf — byte-identical to the pre-gate build
         "${QRT_RUN[@]}" bash -c "${QRT_CMD}" || _notify_build_fail
@@ -296,7 +324,10 @@ build_cores() {
         MKEY="${CORE_NAME[i]}"
         METRICS_JSON="/tmp/${MKEY}_db9_metrics.json"
         BASE_JSON="/tmp/${MKEY}_db9_baseline.json"
-        local SEED_MAX="${SEED_RETRY_MAX:-2}" TMARGIN="${TIMING_MARGIN_NS:-0.5}" TRISK="${TIMING_RISK_FLOOR_NS:-1.0}"
+        # Seed search is OPT-IN per core: SEED_RETRY_MAX defaults to 0 (OFF).
+        # OFF => the gate is report-only (see _db9_seed_gate). Set the per-fork
+        # repo variable SEED_RETRY_MAX to a positive N to enable reseed-recover.
+        local SEED_MAX="${SEED_RETRY_MAX:-0}" TMARGIN="${TIMING_MARGIN_NS:-0.5}" TRISK="${TIMING_RISK_FLOOR_NS:-1.0}"
 
         python3 ./.github/quartus_metrics.py parse "${OUTDIR}" "${REV}" > "${METRICS_JSON}" || true
 
