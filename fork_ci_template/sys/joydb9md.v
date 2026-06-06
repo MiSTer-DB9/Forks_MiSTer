@@ -15,7 +15,7 @@ module joy_db9md(
     // from outside catches the ~20 us state-2..5 window where the flag is
     // transiently 0 even when a 6-btn pad is connected. These outputs latch
     // the stable value at state 6 instead so consumers see a clean per-scan
-    // (~1.3 ms) flag — no glitch, no sticky bias, automatically clears when
+    // (~2.5 ms) flag — no glitch, no sticky bias, automatically clears when
     // a 6-btn pad is unplugged. Default 0 at reset (cold-boot safe).
     output joy1_is_6btn,
     output joy2_is_6btn
@@ -24,12 +24,16 @@ module joy_db9md(
 // Scan length in d7_fall ticks (5.12 us each @ 50 MHz). States 0..6 do the
 // active 6-btn probe; the remaining ticks hold joyMDsel high (idle). A real
 // 6-button pad only resets its internal cycle counter when SEL/TH is held high
-// longer than its internal timeout (~1.624 ms, per MegaDrive SNAC pad_io.sv).
-// SCAN_LEN=384 -> ~1.97 ms scan, ~1.93 ms idle, comfortably above that timeout
-// so the pad counter resets before every scan and the state-5 handshake read
-// (joy_in[3:0]==0) is deterministic. A shorter idle let long-timeout pads drift
-// out of phase -> the 6-btn flag flickered scan-to-scan on some controllers.
-localparam [8:0] SCAN_LEN = 9'd384;
+// longer than its internal timeout. The MegaDrive SNAC pad_io.sv models that as
+// ~1.624 ms, but field controllers run longer: a real pad flickered at the
+// 1.93 ms idle that SCAN_LEN=384 yields @ 50 MHz, yet was steady at the
+// 48-MHz-era 2.01 ms idle (a 50 MHz tick is 5.12 us vs 48 MHz's 5.33 us, so the
+// same count gives a shorter idle). SCAN_LEN=495 -> ~2.53 ms scan, ~2.50 ms idle,
+// comfortably above real-pad timeouts so the pad counter resets before every scan
+// and the state-5 handshake read (joy_in[3:0]==0) is deterministic. A shorter
+// idle let long-timeout pads drift out of phase -> the 6-btn flag flickered
+// scan-to-scan on some controllers.
+localparam [8:0] SCAN_LEN = 9'd495;
 reg [8:0] state = 9'd0;
 reg joy1_6btn = 1'b0, joy2_6btn = 1'b0;
 reg joy1_6btn_lat = 1'b0, joy2_6btn_lat = 1'b0;
@@ -42,7 +46,7 @@ reg joySplit = 1'b1;
 // button on a 3-button Megadrive pad. Gated by per-scan classification
 // (MD-not-MS AND not 6-button) and debounced; Start and B are consumed
 // while active so the game does not see Pause+B alongside Mode.
-localparam [7:0] CHORD_DEBOUNCE = 8'd53;  // ~105 ms at ~1.97 ms/scan
+localparam [7:0] CHORD_DEBOUNCE = 8'd41;  // ~104 ms at ~2.53 ms/scan
 reg joy1_md_thisscan = 1'b0, joy2_md_thisscan = 1'b0;
 reg [7:0] joy1_chord_cnt = 8'd0, joy2_chord_cnt = 8'd0;
 reg joy1_mode_inject = 1'b0, joy2_mode_inject = 1'b0;
