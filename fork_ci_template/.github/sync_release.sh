@@ -183,6 +183,19 @@ if ! git merge -Xignore-all-space --no-commit "${COMMIT_TO_MERGE}"; then
     echo "rerere auto-resolved all conflicts in the upstream merge; proceeding."
 fi
 
+# No-op guard: an "Already up to date." merge (the upstream release commit is
+# already an ancestor of ${MAIN_BRANCH} — e.g. a forced re-dispatch of an
+# already-synced core) leaves no MERGE_HEAD and nothing staged. The unconditional
+# `git commit` below would then die with "nothing to commit, working tree clean"
+# and fail the whole run under `set -e`. Detect that and exit cleanly instead.
+# Safe here because the fork branch always carries its own DB9 commits ahead of
+# upstream, so a real sync is always a 3-way merge (MERGE_HEAD set) — a pure
+# fast-forward that moves HEAD without staging cannot occur.
+if ! git rev-parse -q --verify MERGE_HEAD >/dev/null && git diff --cached --quiet; then
+    echo "Upstream ${COMMIT_TO_MERGE} already merged into ${MAIN_BRANCH}; nothing to merge — skipping."
+    exit 0
+fi
+
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"; }
 
