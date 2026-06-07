@@ -116,10 +116,26 @@ while IFS= read -r q; do
     echo "  ${q}: took upstream (main qsf is regenerated; only LAST_QUARTUS_VERSION differs)"
 done < <(echo "${conflicts}" | grep -E '\.qsf$' || true)
 
-# Step 2d — any OTHER conflict (sys_top.v / hps_io.sv / osd.v with fork markers,
-# unexpected files) is NOT auto-resolved — stop and let the maintainer handle it.
+# Step 2c-bis — auto-resolve sys/hps_io.sv (or pre-SV-rename sys/hps_io.v) by
+# taking upstream, exactly like sys/sys.qip. The fork's hps_io DB9 additions
+# (joy_raw input port, 'h0f handler, saturn_unlocked output, db9_key_gate
+# instance) are NOT hand-merged: apply_db9_framework.sh (Step 3) runs
+# upgrade_pro_additive.py, which re-injects every one of them idempotently using
+# upstream-stable anchors (ps2_key port, casex(cmd) head, joy_raw). So whatever
+# upstream rewrote in hps_io.sv (HPS_BUS [48:0]->[45:0], F12KEYMOD, FIO rework,
+# removed 'h2B/'h2F/'h39/'h3E, etc.) is taken wholesale, then the DB9 block is
+# re-applied on top. Step 3's post-check below verifies the re-injection landed.
+while IFS= read -r h; do
+    [[ -z "${h}" ]] && continue
+    git -C "${WT}" checkout --theirs -- "${h}"
+    git -C "${WT}" add -- "${h}"
+    echo "  ${h}: took upstream; fork joy_raw/'h0f/saturn_unlocked/db9_key_gate re-added by framework"
+done < <(echo "${conflicts}" | grep -E '^sys/hps_io\.(sv|v)$' || true)
+
+# Step 2d — any OTHER conflict (sys_top.v / osd.v with fork markers, unexpected
+# files) is NOT auto-resolved — stop and let the maintainer handle it.
 core_pat=$(printf '%s\n' "${core_svs[@]}")
-other=$(git -C "${WT}" diff --name-only --diff-filter=U | grep -vxF "${core_pat:-/dev/null}" | grep -vx 'sys/sys.qip' | grep -vE '\.qsf$' || true)
+other=$(git -C "${WT}" diff --name-only --diff-filter=U | grep -vxF "${core_pat:-/dev/null}" | grep -vx 'sys/sys.qip' | grep -vE '^sys/hps_io\.(sv|v)$' | grep -vE '\.qsf$' || true)
 if [[ -n "${other}" ]]; then
     echo "RESULT needs-manual: UNEXPECTED conflicts (not <core>.sv / sys.qip): ${other//$'\n'/ }"
     echo "  Resolve those by hand (keep-both for fork-marker regions), then re-run framework + build."
@@ -141,6 +157,23 @@ for f in joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v db9_key_gate.s
 done
 if (( ${#missing[@]} )); then
     echo "WARN sys.qip missing registrations after framework: ${missing[*]} — inspect before building."
+fi
+
+# Verify the hps_io DB9 additions were re-injected after the take-theirs above
+# (Step 2c-bis). If upstream moved an anchor upgrade_pro_additive.py relies on,
+# the re-inject would silently no-op and ship an hps_io with no joy_raw/key gate.
+hps_io_file=""
+[[ -f "${WT}/sys/hps_io.sv" ]] && hps_io_file="${WT}/sys/hps_io.sv"
+[[ -z "${hps_io_file}" && -f "${WT}/sys/hps_io.v" ]] && hps_io_file="${WT}/sys/hps_io.v"
+if [[ -n "${hps_io_file}" ]]; then
+    hps_missing=()
+    grep -Eq 'input[[:space:]]+\[15:0\][[:space:]]+joy_raw'   "${hps_io_file}" || hps_missing+=(joy_raw)
+    grep -Eq "'h0f:"                                          "${hps_io_file}" || hps_missing+=("'h0f")
+    grep -Eq 'saturn_unlocked'                                "${hps_io_file}" || hps_missing+=(saturn_unlocked)
+    grep -Eq 'db9_key_gate'                                   "${hps_io_file}" || hps_missing+=(db9_key_gate)
+    if (( ${#hps_missing[@]} )); then
+        echo "WARN ${hps_io_file##*/} missing DB9 re-injection after framework: ${hps_missing[*]} — inspect before building."
+    fi
 fi
 
 # Step 4 — leftover conflict markers anywhere (apply_db9_framework git-adds files,
