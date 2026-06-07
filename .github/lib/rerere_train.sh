@@ -47,7 +47,16 @@ train_rerere() {
             continue
         fi
         git checkout -q "${parent1}^0"
-        if git merge ${other_parents} >/dev/null 2>&1
+        # MUST mirror the live merge's strategy options (every live merge —
+        # sync_release.sh, unstable_merge.sh, unstable_preflight.sh — uses
+        # -Xignore-all-space). rerere keys on the rendered conflict text, and
+        # -Xignore-all-space changes which hunks conflict and how they segment;
+        # replaying with a plain merge here produces a DIFFERENT preimage than the
+        # live merge, so the recorded resolution never matches and rerere misses
+        # (observed fleet-wide on the upstream 2026-06-03 "Update sys." conflict:
+        # sys.qip happened to segment identically and replayed, but NES.sv /
+        # sys/hps_io.sv reindented by upstream did not). Keep these in lockstep.
+        if git merge -Xignore-all-space ${other_parents} >/dev/null 2>&1
         then
             continue
         fi

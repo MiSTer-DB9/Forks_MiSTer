@@ -135,7 +135,15 @@ do
 		continue
 	fi
 	git checkout -q "${parent1}^0"
-	if git merge ${other_parents} >/dev/null 2>&1
+	# MUST mirror the live merge below (line ~178 uses -Xignore-all-space).
+	# rerere keys on the rendered conflict text; replaying with a plain merge
+	# segments hunks differently than the -Xignore-all-space live merge, so the
+	# recorded resolution never matches and rerere misses. This is exactly why
+	# the upstream 2026-06-03 "Update sys." conflict failed to auto-resolve on
+	# stable despite the canary resolution existing on origin/unstable/<branch>
+	# (sys.qip matched by luck; NES.sv / sys/hps_io.sv, reindented by upstream,
+	# did not). Keep the training strategy options in lockstep with the live one.
+	if git merge -Xignore-all-space ${other_parents} >/dev/null 2>&1
 	then
 		# Cleanly merges
 		continue
