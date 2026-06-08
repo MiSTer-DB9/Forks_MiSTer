@@ -53,6 +53,11 @@ JOYDBBIND="$HERE/lib/joydb_binding_check.py"
 # without the joy_type wrapper or without a .status_in port, parse=2
 # fail-open.
 STATUSFB="$HERE/lib/status_feedback_check.py"
+# Gates (FATAL zero-FP by construction): a joydb core's USER_OUT relay must
+# fall through to USER_OUT_DRIVE in its selector-Off terminal else, else the
+# OSD-open autodetect probe can't drive USER_IO from Off (the NES/SNES/PSX
+# 2026-06 class). n/a for non-joydb cores / plain-assign drivers.
+UOPROBE="$HERE/lib/userout_probe_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 # shellcheck source=lib/canonical_drift_check.sh
@@ -183,6 +188,10 @@ for c in "${cores[@]}"; do
   sf="$(python3 "$STATUSFB" "$ROOT/$c" "$csv" 2>&1)"; sfrc=$?
   out+="$sf"$'\n'
   [ "$sfrc" -eq 1 ] && cfail+="statusfb "
+  # USER_OUT OSD-probe fall-through gate (selector-Off autodetect hazard).
+  uo="$(python3 "$UOPROBE" "$ROOT/$c" "$csv" 2>&1)"; uorc=$?
+  out+="$uo"$'\n'
+  [ "$uorc" -eq 1 ] && cfail+="uoprobe "
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
     if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
@@ -194,7 +203,7 @@ for c in "${cores[@]}"; do
     fi
   else
     failn=$((failn+1)); faillist+=("$c"); echo "FAIL  $c  [${cfail% }]"
-    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:|marker-nest:|vprec:|satgate:|joydb-bind:|statusfb:' \
+    echo "$out" | grep -E 'FAIL|FATAL|portmap:|joydbmap:|mt32gate:|snac:|confstr:|coresv-lint:|joydbsem:|drift:|qipreg:|marker-nest:|vprec:|satgate:|joydb-bind:|statusfb:|uoprobe:' \
       | sed 's/^/      /'
   fi
   # Advisory joydb-semantic WARNs + satgate WEAK are shown regardless of

@@ -47,6 +47,7 @@ VPREC="${SCRIPT_DIR}/verilog_precedence_check.py"
 SATGATE="${SCRIPT_DIR}/saturn_gate_check.py"
 JOYDBBIND="${SCRIPT_DIR}/joydb_binding_check.py"
 STATUSFB="${SCRIPT_DIR}/status_feedback_check.py"
+UOPROBE="${SCRIPT_DIR}/userout_probe_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -129,11 +130,19 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  (parse=2 fail-open). Delta cancels pre-existing latent
 #                  failures so only a merge that NEWLY introduces the
 #                  truncation trips it).
+#   uoprobe        userout_probe_check.py FATAL (a joydb core's USER_OUT
+#                  relay drives the selector-Off terminal else to a constant
+#                  idle instead of USER_OUT_DRIVE, so the OSD-open autodetect
+#                  probe can't drive USER_IO from Off -- the NES/SNES/PSX
+#                  2026-06 class). n/a for non-joydb cores / plain-assign
+#                  drivers (parse=2 fail-open). Delta cancels pre-existing
+#                  latent failures so only a merge that NEWLY introduces it
+#                  trips it.
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
   local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0
-  local mnrc=0 vprc=0 sgrc=0 jbrc=0 sfrc=0 toks=() id
+  local mnrc=0 vprc=0 sgrc=0 jbrc=0 sfrc=0 uorc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -173,6 +182,8 @@ compute_tokens() {
     [ "$jbrc" -eq 1 ] && toks+=("joydbbind") # 1=FATAL; 2=parse (fail-open)
     python3 "$STATUSFB" "$dir" "$csv" >/dev/null 2>&1 || sfrc=$?
     [ "$sfrc" -eq 1 ] && toks+=("statusfb")  # 1=FATAL; 2=parse (fail-open)
+    python3 "$UOPROBE" "$dir" "$csv" >/dev/null 2>&1 || uorc=$?
+    [ "$uorc" -eq 1 ] && toks+=("uoprobe")   # 1=FATAL; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything
