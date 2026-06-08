@@ -81,9 +81,20 @@ wire   [7:0] USER_PP_DRIVE;
 wire  [15:0] joydb_1, joydb_2;
 wire         joydb_1ena, joydb_2ena;
 wire  [15:0] joy_raw_payload;
+// Programmable-remap matrix (joydb_remap inside joydb): clk_sys carries the
+// 0xFD selector load (HPS-bus domain). joydb_*_mapped are the MiSTer-standard
+// joystick words the core consumes at its joy0_USB merge point. db9_remap_*
+// are driven by the hps_io instance (see the .db9_remap_* bindings there).
+// Until a core consumes joydb_*_mapped (Layer B), the matrix stays at identity
+// and synthesis prunes it -- binding these is dormant + fleet-safe.
+wire  [15:0] joydb_1_mapped, joydb_2_mapped;
+wire         db9_remap_cmd;
+wire   [5:0] db9_remap_byte_cnt;
+wire  [15:0] db9_remap_din;
 
 joydb joydb (
   .clk             ( CLK_JOY         ),
+  .clk_sys         ( clk_sys            ),
   .USER_IN         ( USER_IN         ),
   .OSD_STATUS          ( OSD_STATUS          ),
   .snac_active         ( snac_active         ),
@@ -98,6 +109,11 @@ joydb joydb (
   .joydb_2         ( joydb_2         ),
   .joydb_1ena      ( joydb_1ena      ),
   .joydb_2ena      ( joydb_2ena      ),
+  .remap_cmd       ( db9_remap_cmd      ),
+  .remap_byte_cnt  ( db9_remap_byte_cnt ),
+  .remap_din       ( db9_remap_din      ),
+  .joydb_1_mapped  ( joydb_1_mapped     ),
+  .joydb_2_mapped  ( joydb_2_mapped     ),
   .joy_raw         ( joy_raw_payload )
 );
 
@@ -951,6 +967,102 @@ def add_joydb_probe_bindings(text: str) -> tuple[str, bool]:
     return text[:m.start('body')] + new_body + text[m.end('body'):], True
 
 
+# ---- Layer A retrofit: programmable-remap matrix wires + bindings ----
+#
+# WRAPPER_BLOCK emits these for FRESH ports; the three functions below retrofit
+# them onto cores ported before the joydb_remap matrix existed, so a fleet
+# re-run of apply_db9_framework.sh makes the matrix loadable everywhere. All
+# idempotent and DORMANT: the matrix stays at identity (synthesis prunes it)
+# until a core consumes joydb_*_mapped at its joystick merge point (Layer B,
+# not done by the porter yet). Binding the ports adds no behaviour change.
+
+def add_joydb_remap_wire_decls(text: str) -> tuple[str, bool]:
+    """Insert the joydb_*_mapped / db9_remap_* wire decls just before the joydb
+    instance head. Idempotent on `joydb_1_mapped` already present."""
+    if 'joydb_1_mapped' in text:
+        return text, False
+    m = JOYDB_INSTANCE_HEAD_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group('indent')
+    insert = (
+        f"{indent}// [MiSTer-DB9 BEGIN] - DB9 programmable-remap matrix wires\n"
+        f"{indent}// joydb_*_mapped = MiSTer-standard joystick words (consumed in Layer B);\n"
+        f"{indent}// db9_remap_* = 0xFD selector stream driven by the hps_io instance.\n"
+        f"{indent}wire  [15:0] joydb_1_mapped, joydb_2_mapped;\n"
+        f"{indent}wire         db9_remap_cmd;\n"
+        f"{indent}wire   [5:0] db9_remap_byte_cnt;\n"
+        f"{indent}wire  [15:0] db9_remap_din;\n"
+        f"{indent}// [MiSTer-DB9 END]\n"
+    )
+    return text[:m.start()] + insert + text[m.start():], True
+
+
+def add_joydb_remap_bindings(text: str) -> tuple[str, bool]:
+    """Add .clk_sys + .remap_* + .joydb_*_mapped bindings to the joydb instance
+    on cores ported before those ports existed. Idempotent + per-port dedup."""
+    m = JOYDB_INSTANCE_BODY_RE.search(text)
+    if not m:
+        return text, False
+    body = m.group('body')
+    if all(p in body for p in ('.clk_sys', '.remap_cmd', '.joydb_1_mapped')):
+        return text, False
+    # clk_sys binds next to .clk; the remap/mapped group binds after .joydb_2ena.
+    clk_m = re.search(r'^(?P<indent>[ \t]*)\.clk\b[^\n]*\n', body, flags=re.MULTILINE)
+    ena_m = re.search(r'^(?P<indent>[ \t]*)\.joydb_2ena\b[^\n]*\n', body, flags=re.MULTILINE)
+    if not clk_m or not ena_m:
+        return text, False
+    indent = clk_m.group('indent')
+    clk_bind = '' if '.clk_sys' in body else f"{indent}.clk_sys         ( clk_sys            ),\n"
+    remap_binds = (
+        f"{indent}.remap_cmd       ( db9_remap_cmd      ),\n"
+        f"{indent}.remap_byte_cnt  ( db9_remap_byte_cnt ),\n"
+        f"{indent}.remap_din       ( db9_remap_din      ),\n"
+        f"{indent}.joydb_1_mapped  ( joydb_1_mapped     ),\n"
+        f"{indent}.joydb_2_mapped  ( joydb_2_mapped     ),\n"
+    )
+    remap_binds = re.sub(
+        r'^.*\.(remap_cmd|remap_byte_cnt|remap_din|joydb_1_mapped|joydb_2_mapped)\b[^\n]*\n',
+        lambda mm: '' if f'.{mm.group(1)}' in body else mm.group(0),
+        remap_binds, flags=re.MULTILINE,
+    )
+    if not clk_bind and not remap_binds:
+        return text, False
+    # Insert after .joydb_2ena first (later offset), then .clk (earlier offset
+    # is unaffected by the later insertion).
+    new_body = body[:ena_m.end()] + remap_binds + body[ena_m.end():]
+    new_body = new_body[:clk_m.end()] + clk_bind + new_body[clk_m.end():]
+    return text[:m.start('body')] + new_body + text[m.end('body'):], True
+
+
+# Migrated `.joy_raw(OSD_STATUS ? joy_raw_payload ...)` binding anchor on the
+# core's hps_io instance. The db9_remap_* bindings sit right after it, inside
+# the same always-free DB9 block (matches the SNES reference wiring).
+HPS_JOY_RAW_MIGRATED_RE = re.compile(
+    r'^(?P<indent>[ \t]*)\.joy_raw\(\s*OSD_STATUS\s*\?\s*joy_raw_payload[^\n]*\n',
+    flags=re.MULTILINE,
+)
+
+
+def add_hps_io_remap_bindings(text: str) -> tuple[str, bool]:
+    """Bind the three db9_remap_* hps_io OUTPUT ports on the core's hps_io
+    instance, after the migrated .joy_raw line. Decoupled from replace_joy_raw
+    so an already-saturn-migrated core (fleet re-port) still gains them."""
+    if '.db9_remap_cmd(' in text:
+        return text, False
+    m = HPS_JOY_RAW_MIGRATED_RE.search(text)
+    if not m:
+        return text, False
+    indent = m.group('indent')
+    block = (
+        f"{indent}// programmable remap matrix selector load (UIO_DB9_MAP 0xFD)\n"
+        f"{indent}.db9_remap_cmd(db9_remap_cmd),\n"
+        f"{indent}.db9_remap_byte_cnt(db9_remap_byte_cnt),\n"
+        f"{indent}.db9_remap_din(db9_remap_din),\n"
+    )
+    return text[:m.end()] + block + text[m.end():], True
+
+
 # ---- Orchestrator ----
 
 def port_core(core_dir: Path) -> list[str]:
@@ -1093,6 +1205,24 @@ def port_core(core_dir: Path) -> list[str]:
     text, ok = add_joydb_probe_bindings(text)
     if ok:
         notes.append(f'{sv.name}: added OSD-probe bindings (.OSD_STATUS/.snac_active/.mt32_primary_active) to joydb instance')
+
+    # Layer A (dormant): make the joydb_remap matrix loadable. Binds the new
+    # joydb/hps_io ports + declares the matrix wires. No behaviour change until
+    # a core consumes joydb_*_mapped (Layer B). Each pass idempotent.
+    text, ok = add_joydb_remap_wire_decls(text)
+    if ok:
+        notes.append(f'{sv.name}: added joydb_remap matrix wire decls (joydb_*_mapped, db9_remap_*)')
+    text, ok = add_joydb_remap_bindings(text)
+    if ok:
+        notes.append(f'{sv.name}: added matrix bindings (.clk_sys/.remap_*/.joydb_*_mapped) to joydb instance')
+    text, ok = add_hps_io_remap_bindings(text)
+    if ok:
+        notes.append(f'{sv.name}: added .db9_remap_* selector-stream bindings to hps_io instance')
+    # clk_sys is the HPS-bus clock the matrix selector loads on. Nearly every
+    # core declares it; flag the rare ones that name it differently so the
+    # .clk_sys(clk_sys) binding can be hand-wired to the right net.
+    if 'joydb_1_mapped' in text and not re.search(r'\bclk_sys\b', orig):
+        notes.append(f'{sv.name}: WARNING — no clk_sys net found in original; hand-wire joydb .clk_sys(...) to the core HPS-bus clock')
 
     if text == orig:
         notes.append(f'{sv.name}: no changes')

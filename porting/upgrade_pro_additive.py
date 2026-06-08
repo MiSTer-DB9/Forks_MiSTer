@@ -181,6 +181,47 @@ def upgrade_hps_io(path: Path) -> list[str]:
             text = text[:m.end()] + insert + text[m.end():]
             notes.append(f'{path}: added v1.5 saturn_unlocked port')
 
+    # 1c-remap. Add the three db9_remap_* OUTPUT ports (DB9 programmable-remap
+    # selector stream, UIO_DB9_MAP 0xFD) + their driving assigns. Always-free
+    # DB9 plumbing (NOT key-gated). Dormant: just exposes the 0xFD stream so the
+    # joydb_remap matrix is loadable; no behaviour change until a core consumes
+    # joydb_*_mapped (Layer B). Idempotent on db9_remap_cmd already present.
+    # Port syntax (`output`, `output [N:0]`) is identical for hps_io.sv and the
+    # SV-parsed hps_io.v (apply_db9_framework.sh flips its sys.qip entry to
+    # SYSTEMVERILOG_FILE), so the uio_block.cmd hierarchical name works on both.
+    if 'db9_remap_cmd' not in text:
+        m = re.search(
+            r'^([ \t]*)input[ \t]+\[15:0\][ \t]+joy_raw,[^\n]*\n'
+            r'(?:[ \t]*//[^\n]*\n)?',
+            text, flags=re.MULTILINE,
+        )
+        if not m:
+            notes.append(f'{path}: joy_raw input not found — db9_remap_* ports skipped')
+        else:
+            indent = m.group(1)
+            port_insert = (
+                f'{indent}// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream (UIO_DB9_MAP 0xFD)\n'
+                f'{indent}output            db9_remap_cmd,\n'
+                f'{indent}output      [5:0] db9_remap_byte_cnt,\n'
+                f'{indent}output     [15:0] db9_remap_din,\n'
+                f'{indent}// [MiSTer-DB9 END]\n'
+            )
+            text = text[:m.end()] + port_insert + text[m.end():]
+            em = re.search(r'^endmodule\b[^\n]*\n', text, flags=re.MULTILINE)
+            if em:
+                assign_insert = (
+                    '\n'
+                    '// [MiSTer-DB9 BEGIN] - DB9 programmable-remap selector stream drivers\n'
+                    "assign db9_remap_cmd      = (uio_block.cmd == 16'hFD);\n"
+                    'assign db9_remap_byte_cnt = byte_cnt[5:0];\n'
+                    'assign db9_remap_din      = io_din;\n'
+                    '// [MiSTer-DB9 END]\n'
+                )
+                text = text[:em.start()] + assign_insert + text[em.start():]
+                notes.append(f'{path}: added db9_remap_* ports + selector-stream assigns')
+            else:
+                notes.append(f'{path}: db9_remap_* ports added but no endmodule for assigns — hand-add')
+
     # 1d. Add db9_key_gate instantiation just before the hps_io module's
     # endmodule (the FIRST endmodule in the file).
     if 'db9_key_gate' not in text:

@@ -44,6 +44,7 @@ apply_db9_framework() {
     grep -Fwq joydb15.v        sys/sys.qip || echo 'set_global_assignment -name VERILOG_FILE        [file join $::quartus(qip_path) joydb15.v ]'        >> sys/sys.qip
     grep -Fwq joydb9saturn.v   sys/sys.qip || echo 'set_global_assignment -name VERILOG_FILE        [file join $::quartus(qip_path) joydb9saturn.v ]'   >> sys/sys.qip
     grep -Fwq joydb.sv         sys/sys.qip || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) joydb.sv ]'         >> sys/sys.qip
+    grep -Fwq joydb_remap.sv   sys/sys.qip || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) joydb_remap.sv ]'   >> sys/sys.qip
     grep -Fwq siphash24.v      sys/sys.qip || echo 'set_global_assignment -name VERILOG_FILE        [file join $::quartus(qip_path) siphash24.v ]'      >> sys/sys.qip
     grep -Fwq db9_key_gate.sv  sys/sys.qip || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) db9_key_gate.sv ]'  >> sys/sys.qip
 
@@ -67,6 +68,7 @@ apply_db9_framework() {
     fi
 
     git add sys/joydb9md.v sys/joydb15.v sys/joydb9saturn.v sys/joydb.sv \
+            sys/joydb_remap.sv \
             sys/siphash24.v sys/db9_key_gate.sv sys/db9_key_secret.vh \
             sys/sys.qip "${hps_io_rel}" sys/sys_top.v sys/sys.tcl
 

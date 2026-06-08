@@ -43,6 +43,7 @@
 module joydb
 (
     input  logic        clk,            // CLK_JOY (40-50 MHz)
+    input  logic        clk_sys,        // HPS bus clock, for the remap selector load
     input  logic [7:0]  USER_IN,
 
     // Quartus 17.0.2 Standard rejects SV port defaults (LRM 23.2.2.4, Err 10231),
@@ -77,6 +78,27 @@ module joydb
     // games (ffight, captcomm, ...).
     output logic        pad_1_6btn,
     output logic        pad_2_6btn,
+
+    // Programmable per-core button-remap matrix (UIO 0xFD selector load from
+    // Main_MiSTer db9_map.cpp). joydb_*_mapped are joydb_1/joydb_2 rewired
+    // into MiSTer-standard order per the streamed table — drop-in for a
+    // core's joy0_USB merge point. Tie remap_cmd=0 to leave the matrix at its
+    // identity reset default. Additive: joydb_1/joydb_2 are unchanged so
+    // un-migrated cores keep their hardcoded permutation.
+    //
+    // NOTE: these ports + clk_sys are NOT yet bound by the porter WRAPPER_BLOCK
+    // (port_core_full.py) and there is no canonical hps_io.sv carrying the
+    // db9_remap_* outputs. The SNES pilot wires them by hand in SNES.sv /
+    // sys/hps_io.sv. On an un-migrated core they are left unconnected: remap_cmd
+    // ties low (matrix stays at identity, joydb_remap is pruned) and *_mapped
+    // dangle, so the feature is simply absent there. Fleet rollout requires
+    // teaching the porter to bind these and adding the db9_remap_* outputs to
+    // hps_io; until then re-porting a core will drop these bindings.
+    input  logic        remap_cmd,
+    input  logic [5:0]  remap_byte_cnt,
+    input  logic [15:0] remap_din,
+    output logic [15:0] joydb_1_mapped,
+    output logic [15:0] joydb_2_mapped,
 
     // joy_raw payload (caller wraps with OSD_STATUS guard at hps_io site)
     output logic [15:0] joy_raw
@@ -397,6 +419,20 @@ assign joydb_2 = data_sel_saturn ? saturn_p2
                : data_sel_db15   ? JOYDB15_2
                :                   16'h0000;
 // [MiSTer-DB9-Pro END]
+// Programmable remap matrix: rewires the (already Saturn-gated) raw words into
+// MiSTer-standard order per the UIO-0xFD selector table. Combinational mux off
+// a config register written only at OSD-time -> zero gameplay-path latency.
+joydb_remap joydb_remap_i (
+    .clk_sys        ( clk_sys        ),
+    .remap_cmd      ( remap_cmd      ),
+    .remap_byte_cnt ( remap_byte_cnt ),
+    .remap_din      ( remap_din      ),
+    .joydb_1        ( joydb_1        ),
+    .joydb_2        ( joydb_2        ),
+    .joydb_1_mapped ( joydb_1_mapped ),
+    .joydb_2_mapped ( joydb_2_mapped )
+);
+
 // Probe needs joydb_1 active even when user had Off (joy_any_en=0) so the OSD
 // nav path still sees Start+C from the hot-swapped pad.
 assign joydb_1ena = probe_active | joy_any_en;

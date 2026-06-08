@@ -81,7 +81,7 @@ setup_cicd_on_fork() {
     # Pristine upstream forks and Main_MiSTer (no sys/ tree) skip —
     # apply_db9_framework.sh is the only path that performs the initial
     # port and drops joydb9saturn.v.
-    SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
+    SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv joydb_remap.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
     SYNC_SYS=0
     SYS_REL_DIR=""
     SATURN_HIT=$(find "${TEMP_DIR}" -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
@@ -92,6 +92,15 @@ setup_cicd_on_fork() {
         for f in "${SYS_HELPERS[@]}"; do
             cp "fork_ci_template/sys/${f}" "${SYS_DIR}/${f}"
         done
+        # joydb_remap.sv was added to SYS_HELPERS after most forks were ported,
+        # so their sys.qip lacks its registration line while the freshly-copied
+        # canonical joydb.sv already instantiates joydb_remap -> "Unknown module
+        # joydb_remap" at elaboration. Idempotently register it here (mirror of
+        # apply_db9_framework.sh) so propagation alone keeps every fork buildable.
+        if [[ -f "${SYS_DIR}/sys.qip" ]]; then
+            grep -Fwq joydb_remap.sv "${SYS_DIR}/sys.qip" \
+                || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) joydb_remap.sv ]' >> "${SYS_DIR}/sys.qip"
+        fi
     else
         echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (no */sys/joydb9saturn.v within depth 4)."
     fi
