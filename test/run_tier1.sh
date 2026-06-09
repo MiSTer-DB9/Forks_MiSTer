@@ -55,7 +55,7 @@ fi
 echo "== Tier 1: tb_joydb_wrapper (joydb.sv, sv2012) =="
 if iverilog -g2012 -o "$WORK/tbw.vvp" -s tb_joydb_wrapper \
      "$SIM/tb_joydb_wrapper.sv" "$SYS/joydb.sv" "$SYS/joydb15.v" \
-     "$SYS/joydb9md.v" "$SYS/joydb9saturn.v" >"$WORK/cw.log" 2>&1 \
+     "$SYS/joydb9md.v" "$SYS/joydb9saturn.v" "$SYS/joydb_remap.sv" >"$WORK/cw.log" 2>&1 \
    && vvp "$WORK/tbw.vvp" 2>&1 | tee "$WORK/rw.log" \
    && grep -q "TIER1 tb_joydb_wrapper: PASS" "$WORK/rw.log"; then
   note "tb_joydb_wrapper PASS"
