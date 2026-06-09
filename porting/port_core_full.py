@@ -972,9 +972,10 @@ def add_joydb_probe_bindings(text: str) -> tuple[str, bool]:
 # WRAPPER_BLOCK emits these for FRESH ports; the three functions below retrofit
 # them onto cores ported before the joydb_remap matrix existed, so a fleet
 # re-run of apply_db9_framework.sh makes the matrix loadable everywhere. All
-# idempotent and DORMANT: the matrix stays at identity (synthesis prunes it)
-# until a core consumes joydb_*_mapped at its joystick merge point (Layer B,
-# not done by the porter yet). Binding the ports adds no behaviour change.
+# idempotent: binding the ports alone adds no behaviour change — the matrix
+# stays at identity (synthesis prunes it) until a core consumes joydb_*_mapped
+# at its joystick merge point, which swap_joystick_mapped (Layer B, below) now
+# does in the same porter run.
 
 def add_joydb_remap_wire_decls(text: str) -> tuple[str, bool]:
     """Insert the joydb_*_mapped / db9_remap_* wire decls just before the joydb
@@ -1061,6 +1062,123 @@ def add_hps_io_remap_bindings(text: str) -> tuple[str, bool]:
         f"{indent}.db9_remap_din(db9_remap_din),\n"
     )
     return text[:m.end()] + block + text[m.end():], True
+
+
+# ---- Layer B: consume the matrix output at the gameplay merge ----
+#
+# Swap the core's hardcoded `joydb_N` permutation for `joydb_N_mapped[W:0]` at
+# the joystick-merge point ONLY, so the user-programmable matrix (joydb_remap.sv,
+# UIO 0xFD) actually rewrites the buttons. W+1 = the perm's driven-bit width, so
+# the slice width is unchanged — only the button->pin mapping moves into the
+# matrix (factory default derived from CONF_STR J1 by db9_map.cpp). Anchored on
+# the gameplay guard `OSD_STATUS ? <zeros> : <PERM>` that wrap_joystick_mux
+# installs, so it never touches the OSD probe / joy_raw / SNAC raw paths (those
+# carry joy_raw_payload, not a bare joydb_N perm). Idempotent: a PERM already
+# `joydb_N_mapped[...]` (e.g. Saturn's hand-wired form) is skipped.
+
+# Cores whose gameplay merge must NOT be auto-swapped to joydb_*_mapped (keyed on
+# the emu `<core>.sv` stem). See the call site in port_core() for the rationale.
+LAYERB_EXCLUDE = frozenset({'Saturn', 'InputTest', 'X68000'})
+
+# Value-arm of the gameplay guard: `OSD_STATUS ? <zeros> :` then the PERM token.
+_LAYERB_ANCHOR_RE = re.compile(r'OSD_STATUS\s*\?\s*[^:{}]*:\s*')
+
+
+def _perm_tok_width(t: str) -> tuple[int, bool]:
+    """(bit width, is-zero-pad) of one concat token. is-zero-pad => a leading
+    constant-0 slot whose bits don't count toward the matrix slice width."""
+    t = t.strip()
+    m = re.match(r"^(\d+)'b[01_]+$", t)              # sized binary literal
+    if m:
+        return int(m.group(1)), set(t.split("'b", 1)[1]) <= {'0', '_'}
+    m = re.match(r"^(\d+)'[hd]([0-9a-fA-F_]+)$", t)  # sized hex/dec literal (rare)
+    if m:
+        return int(m.group(1)), set(m.group(2)) <= {'0', '_'}
+    m = re.match(r"^joydb_\d\[(\d+):(\d+)\]$", t)    # multi-bit slice
+    if m:
+        return int(m.group(1)) - int(m.group(2)) + 1, False
+    if re.match(r"^joydb_\d\[\d+\]", t):             # single bit, maybe OR-merged
+        return 1, False
+    if re.fullmatch(r"joydb_\d", t):                 # bare full signal
+        return 16, False
+    if re.fullmatch(r"1'b[01]", t):
+        return 1, t.endswith('0')
+    raise ValueError("unknown token width: %r" % t)
+
+
+def _perm_width(perm: str) -> int:
+    """Driven-bit width of a brace concat or bare slice (minus leading 0-pad)."""
+    perm = re.sub(r"//[^\n]*", "", perm).replace("\r", "").replace("\n", " ").strip()
+    if perm.startswith("{") and perm.endswith("}"):
+        perm = perm[1:-1]
+    total = pad = 0
+    in_lead = True
+    for t in perm.split(","):
+        w, isz = _perm_tok_width(t)
+        total += w
+        if in_lead and isz:
+            pad += w
+        else:
+            in_lead = False
+    return total - pad
+
+
+def _grab_perm(text: str, pos: int) -> tuple[str | None, int]:
+    """At text[pos], grab a PERM token: balanced `{..}` concat, bare `joydb_N`,
+    or `joydb_N[..]` slice. Returns (perm, end) or (None, pos)."""
+    if pos >= len(text):
+        return None, pos
+    if text[pos] == '{':
+        depth = 0
+        for i in range(pos, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[pos:i + 1], i + 1
+        return None, pos
+    m = re.match(r"joydb_[12](\[\d+(:\d+)?\])?(?!\w)", text[pos:])
+    if m:
+        return m.group(0), pos + m.end()
+    return None, pos
+
+
+def swap_joystick_mapped(text: str) -> tuple[str, int]:
+    """Layer B: rewrite each gameplay-merge PERM (`OSD_STATUS ? 0 : <joydb_N
+    perm>`) to `joydb_N_mapped[W:0]`. Idempotent; returns (text, count)."""
+    out: list[str] = []
+    i = 0
+    n = 0
+    while True:
+        m = _LAYERB_ANCHOR_RE.search(text, i)
+        if not m:
+            out.append(text[i:])
+            break
+        # Skip anchors inside a `//` line comment (e.g. a commented-out old
+        # merge left behind next to the live `joydb_*_mapped` line).
+        line_start = text.rfind('\n', 0, m.start()) + 1
+        if '//' in text[line_start:m.start()]:
+            eol = text.find('\n', m.end())
+            eol = len(text) if eol == -1 else eol + 1
+            out.append(text[i:eol])
+            i = eol
+            continue
+        out.append(text[i:m.end()])
+        perm, end = _grab_perm(text, m.end())
+        if perm and 'joydb_' in perm and '_mapped' not in perm:
+            mn = re.search(r"joydb_([12])", perm)
+            try:
+                w = _perm_width(perm)
+                out.append("joydb_%s_mapped[%d:0]" % (mn.group(1), w - 1))
+                i = end
+                n += 1
+                continue
+            except ValueError:
+                pass  # un-parseable perm: leave it for hand review, emit as-is
+        # not a perm we rewrite (joy_raw_payload, already-mapped, etc.)
+        i = m.end()
+    return ''.join(out), n
 
 
 # ---- Orchestrator ----
@@ -1218,6 +1336,25 @@ def port_core(core_dir: Path) -> list[str]:
     text, ok = add_hps_io_remap_bindings(text)
     if ok:
         notes.append(f'{sv.name}: added .db9_remap_* selector-stream bindings to hps_io instance')
+
+    # Layer B (active): consume the matrix output at the gameplay merge so the
+    # programmable remap actually rewrites buttons. Runs after wrap_joystick_mux
+    # installs the OSD guard it anchors on. Idempotent (already-mapped lines and
+    # `//` comments are skipped). Excluded cores keep their hand-wired merge:
+    #   Saturn    — Layer B is hand-wired (`{19'b0, joydb_1_mapped[12:0]}`, ALM-
+    #               tight ~96%, coupled to saturn_via_smpc / SNAC passive-watcher),
+    #               migrated by hand with a fit check — NEVER this generic
+    #               auto-swap, which would emit the wrong form and disturb the
+    #               gated SMPC/SNAC paths. (Proven on `unstable/main` first.)
+    #   InputTest — controller-test core; must display RAW inputs, not remapped.
+    #   X68000    — held special: custom active-low (`~{...}`) inverted merge that
+    #               the generic swap would mis-handle; do Layer B by hand.
+    if sv.stem not in LAYERB_EXCLUDE:
+        text, n = swap_joystick_mapped(text)
+        if n:
+            notes.append(f'{sv.name}: Layer B — consumed joydb_*_mapped at {n} gameplay merge(s)')
+    else:
+        notes.append(f'{sv.name}: Layer B swap SKIPPED (excluded core — hand-wired merge preserved)')
     # clk_sys is the HPS-bus clock the matrix selector loads on. Nearly every
     # core declares it; flag the rare ones that name it differently so the
     # .clk_sys(clk_sys) binding can be hand-wired to the right net.
