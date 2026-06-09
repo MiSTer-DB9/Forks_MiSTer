@@ -1078,7 +1078,14 @@ def add_hps_io_remap_bindings(text: str) -> tuple[str, bool]:
 
 # Cores whose gameplay merge must NOT be auto-swapped to joydb_*_mapped (keyed on
 # the emu `<core>.sv` stem). See the call site in port_core() for the rationale.
-LAYERB_EXCLUDE = frozenset({'Saturn', 'InputTest', 'X68000'})
+#   Saturn     - hand-wired form coupled to saturn_via_smpc / SNAC passive watcher.
+#   InputTest  - controller-test core, must show raw bits, nothing to remap.
+#   X68000     - active-low `~{...}` inverted merge with a reordered dpad slice.
+#   Atari5200  - merge OR-combines two DB9 buttons into one Fire bit
+#                (`joydb_1[5]|joydb_1[4]`); the matrix only offers an AND combo
+#                source (raw[10]&raw[5]), so a straight mapped[] slice can't
+#                reproduce the dual-fire OR. Keep the raw merge (Layer A dormant).
+LAYERB_EXCLUDE = frozenset({'Saturn', 'InputTest', 'X68000', 'Atari5200'})
 
 # Value-arm of the gameplay guard: `OSD_STATUS ? <zeros> :` then the PERM token.
 _LAYERB_ANCHOR_RE = re.compile(r'OSD_STATUS\s*\?\s*[^:{}]*:\s*')
