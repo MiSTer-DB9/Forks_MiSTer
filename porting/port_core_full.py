@@ -1064,6 +1064,47 @@ def add_hps_io_remap_bindings(text: str) -> tuple[str, bool]:
     return text[:m.end()] + block + text[m.end():], True
 
 
+_CLK_SYS_ARG_RE = re.compile(r'\.clk_sys\s*\(\s*([A-Za-z_]\w*(?:\[\d+\])?)\s*\)')
+
+
+def detect_hps_clk(text: str) -> str:
+    """The HPS-bus clock the core feeds its hps_io instance — i.e. the net the
+    0xFD selector stream is clocked in. joydb's `.clk_sys` MUST bind to the same
+    net so the matrix selector loads CDC-correctly (mirrors db9_key_gate). We
+    take the last `.clk_sys(...)` arg appearing before `.HPS_BUS` — that is the
+    hps_io binding (any earlier joydb `.clk_sys(clk_sys)` is overwritten by it).
+    Most cores call it `clk_sys`; some use `clock32`/`clk`/`clk_1x`/`CLK_49M`/…"""
+    hb = text.find('.HPS_BUS')
+    if hb < 0:
+        return 'clk_sys'
+    real = 'clk_sys'
+    for m in _CLK_SYS_ARG_RE.finditer(text[:hb]):
+        real = m.group(1)
+    return real
+
+
+def fix_joydb_clk_sys(text: str) -> tuple[str, bool]:
+    """Rebind the joydb instance's `.clk_sys(...)` to the core's real HPS-bus
+    clock (detect_hps_clk) when they differ. Catches cores that don't name their
+    system clock `clk_sys`: the porter used to emit `.clk_sys(clk_sys)` blindly,
+    leaving an undeclared net — a hard build error under `default_nettype none`
+    (e.g. Enterprise), or a silently floating selector-load clock elsewhere (the
+    0xFD map never latches → DB9 buttons stuck dead). Idempotent."""
+    m = JOYDB_INSTANCE_BODY_RE.search(text)
+    if not m:
+        return text, False
+    body = m.group('body')
+    cm = _CLK_SYS_ARG_RE.search(body)
+    if not cm:
+        return text, False
+    cur = cm.group(1)
+    real = detect_hps_clk(text)
+    if cur == real:
+        return text, False
+    new_body = body[:cm.start(1)] + real + body[cm.end(1):]
+    return text[:m.start('body')] + new_body + text[m.end('body'):], True
+
+
 # ---- Layer B: consume the matrix output at the gameplay merge ----
 #
 # Swap the core's hardcoded `joydb_N` permutation for `joydb_N_mapped[W:0]` at
@@ -1362,11 +1403,14 @@ def port_core(core_dir: Path) -> list[str]:
             notes.append(f'{sv.name}: Layer B — consumed joydb_*_mapped at {n} gameplay merge(s)')
     else:
         notes.append(f'{sv.name}: Layer B swap SKIPPED (excluded core — hand-wired merge preserved)')
-    # clk_sys is the HPS-bus clock the matrix selector loads on. Nearly every
-    # core declares it; flag the rare ones that name it differently so the
-    # .clk_sys(clk_sys) binding can be hand-wired to the right net.
-    if 'joydb_1_mapped' in text and not re.search(r'\bclk_sys\b', orig):
-        notes.append(f'{sv.name}: WARNING — no clk_sys net found in original; hand-wire joydb .clk_sys(...) to the core HPS-bus clock')
+    # clk_sys is the HPS-bus clock the matrix selector loads on. Most cores name
+    # it `clk_sys`; the rare ones use `clock32`/`clk`/`clk_1x`/`CLK_49M`/… — bind
+    # joydb's .clk_sys to whatever the core feeds hps_io, else it's an undeclared
+    # net (build error under `default_nettype none`, or a floating selector clock
+    # so the 0xFD map never latches and DB9 buttons go dead). Idempotent.
+    text, ok = fix_joydb_clk_sys(text)
+    if ok:
+        notes.append(f'{sv.name}: rebound joydb .clk_sys to the core HPS-bus clock ({detect_hps_clk(text)})')
 
     if text == orig:
         notes.append(f'{sv.name}: no changes')
