@@ -2,7 +2,7 @@
 # `USER_OUT` OSD-open-probe drive check.
 #
 # Enforces the fix in the fork hazard notes /
-# the MT32 anti-contention rule probe path: the joydb wrapper's OSD-open autodetect FSM
+# the fork hazard notes probe path: the joydb wrapper's OSD-open autodetect FSM
 # emits its DB9MD/DB15/Saturn probe strobes on `USER_OUT_DRIVE`. The parent
 # core must let those strobes reach the USER_IO pins while the OSD is open and
 # the "UserIO Joystick" selector is Off -- otherwise autodetect-from-Off is

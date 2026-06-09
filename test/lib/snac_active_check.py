@@ -12,7 +12,7 @@
 # porter is supposed to preserve a custom RHS (extract_snac_active_rhs in
 # port_core_full.py). A re-run / merge that loses it is silent -- exactly
 # the regression class the fleet audit exists to catch. Table-driven, keyed
-# by core directory name (the hazard doc's per-core table).
+# by core directory name (the fork hazard notes' per-core table).
 #
 # Severities (mirrors joydb_map_check.py's contract):
 #   FATAL   (exit 1): a known SNAC core whose snac_active RHS is still the
@@ -36,7 +36,7 @@ from emu_portmap_check import find_core_sv, strip_comments  # noqa: E402
 FATAL = "FATAL"
 FINDING = "FINDING"
 
-# Per-core SNAC-enable RHS, verbatim from the SNAC-priority rule. The value is
+# Per-core SNAC-enable RHS, verbatim from the fork hazard notes. The value is
 # shown to the maintainer for context; the GATE is only "RHS != inert
 # default" (exact-expr equality is fragile across legitimate refactors and
 # would risk false positives -- the regression we must catch is the porter
@@ -98,7 +98,7 @@ def analyze(core_name, core_sv):
             FINDING,
             f"`wire snac_active = {rhs};` is non-default but {core_name} "
             f"is not in the SNAC table -- newly-SNAC core not yet tabled? "
-            f"review + add to the SNAC-priority rule / SNAC_CORES"))
+            f"review + add to the fork hazard notes / SNAC_CORES"))
     return issues, rhs
 
 

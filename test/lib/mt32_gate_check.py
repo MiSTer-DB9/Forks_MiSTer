@@ -18,7 +18,7 @@
 #           must be governed by a gate token (mt32_use / mt32_disable /
 #           mt32_on_primary), never an unconditional `else`.
 #
-# Recognised correct variants (all in the MT32 anti-contention rule):
+# Recognised correct variants (all in the fork hazard notes):
 #   * always_comb : `else if (mt32_use) begin USER_OUT[6:0] = USER_OUT_MT32;`
 #                   (Minimig / AtariST / X68000)
 #   * assign      : `... : mt32_use ? mt32_out : 8'hFF;`  (ao486)
