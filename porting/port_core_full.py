@@ -1119,7 +1119,9 @@ def fix_joydb_clk_sys(text: str) -> tuple[str, bool]:
 
 # Cores whose gameplay merge must NOT be auto-swapped to joydb_*_mapped (keyed on
 # the emu `<core>.sv` stem). See the call site in port_core() for the rationale.
-#   Saturn     - hand-wired form coupled to saturn_via_smpc / SNAC passive watcher.
+#   Saturn     - hand-wired Layer-B form (`{19'b0, joydb_1_mapped[12:0]}`, Pro
+#                markers) coupled to saturn_via_smpc / SNAC passive watcher; the
+#                generic slice swap can't reproduce it, so keep it hand-maintained.
 #   InputTest  - controller-test core, must show raw bits, nothing to remap.
 #   X68000     - active-low `~{...}` inverted merge with a reordered dpad slice.
 #   Atari5200  - merge OR-combines two DB9 buttons into one Fire bit
@@ -1127,6 +1129,17 @@ def fix_joydb_clk_sys(text: str) -> tuple[str, bool]:
 #                source (raw[10]&raw[5]), so a straight mapped[] slice can't
 #                reproduce the dual-fire OR. Keep the raw merge (Layer A dormant).
 LAYERB_EXCLUDE = frozenset({'Saturn', 'InputTest', 'X68000', 'Atari5200'})
+
+# Same intent as LAYERB_EXCLUDE but keyed on the CORE DIRECTORY name, for cores
+# whose emu sv is the generic `Template.sv` (so sv.stem can't single them out
+# without excluding every arcade Template.sv). Both read FIXED standard joystick
+# bits (joy[10/11/12] = Select/Start/L), NOT J1-sequential bits, so the matrix —
+# which emits a J1-ordered mapped[] word — cannot reproduce their merge:
+#   Arcade-Darius          — `{3'b0,[9],[6],[10],4'b0,[5],[4],[3:0]}` fixed-bit reorder
+#   Arcade-CityConnection  — `{[11],[9],[10],[5:0]}` reorder AND P1!=P2 (one shared
+#                            remap table can't drive two different per-player orders)
+# Keep their raw merge (Layer A dormant); Layer B by hand if ever needed.
+LAYERB_EXCLUDE_DIRS = frozenset({'Arcade-Darius_MiSTer', 'Arcade-CityConnection_MiSTer'})
 
 # Value-arm of the gameplay guard: `OSD_STATUS ? <zeros> :` then the PERM token.
 _LAYERB_ANCHOR_RE = re.compile(r'OSD_STATUS\s*\?\s*[^:{}]*:\s*')
@@ -1397,7 +1410,7 @@ def port_core(core_dir: Path) -> list[str]:
     #   InputTest — controller-test core; must display RAW inputs, not remapped.
     #   X68000    — held special: custom active-low (`~{...}`) inverted merge that
     #               the generic swap would mis-handle; do Layer B by hand.
-    if sv.stem not in LAYERB_EXCLUDE:
+    if sv.stem not in LAYERB_EXCLUDE and core_dir.name not in LAYERB_EXCLUDE_DIRS:
         text, n = swap_joystick_mapped(text)
         if n:
             notes.append(f'{sv.name}: Layer B — consumed joydb_*_mapped at {n} gameplay merge(s)')
