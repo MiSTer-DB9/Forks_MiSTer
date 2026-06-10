@@ -13,12 +13,12 @@
 # joydb.sv instantiates them and they must stay byte-equal to the fork's
 # other ports. joydb_remap.sv ships too: joydb.sv instantiates joydb_remap
 # (the programmable button-remap matrix), so without it the jt build fails
-# Error 12006 "instantiates undefined entity joydb_remap". jtframe consumes
-# raw joydb_1/joydb_2 in jtframe_joymux.v, so the matrix stays dormant
-# (outputs pruned) until a future jt Layer-B wires joydb_*_mapped -- but the
-# module must still be present for joydb.sv to elaborate. The jtcores
-# files.yaml must list it under the [MiSTer-DB9] block (one-time registration,
-# not managed here).
+# Error 12006 "instantiates undefined entity joydb_remap". jtframe_joymux.v now
+# consumes the matrix output joydb_*_mapped (jt Layer-B), with the 0xFD selector
+# stream routed from hps_io through jtframe_mister.sv -- those three jt-owned
+# files are NOT managed here (edited in place), only the canonical sys/ helpers
+# below are synced. The jtcores files.yaml must list joydb_remap.sv under the
+# [MiSTer-DB9] block (one-time registration, not managed here).
 #
 # joydb15.v is now synced too: canonical absorbed the `ifdef JTFRAME_SDRAM96`
 # branch (JCLOCKS[4] / /32 tick under 96 MHz clk) that previously kept jt's
