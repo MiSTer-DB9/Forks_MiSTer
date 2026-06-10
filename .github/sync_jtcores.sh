@@ -5,13 +5,20 @@
 # two destinations under modules/jtframe/target/mister/hdl/:
 #
 #   hdl/sys/   key-gate trio: siphash24.v, db9_key_gate.sv, db9_key_secret.vh
-#   hdl/       joydb wrapper + 3 helpers: joydb.sv, joydb9md.v, joydb9saturn.v,
-#              joydb15.v
+#   hdl/       joydb wrapper + 4 helpers: joydb.sv, joydb9md.v, joydb9saturn.v,
+#              joydb15.v, joydb_remap.sv
 #
 # joydb.sv carries the OSD-open autodetect FSM (Saturn/DB9MD/DB15 hot-swap
 # while OSD is open). joydb9md.v and joydb9saturn.v ship alongside because
 # joydb.sv instantiates them and they must stay byte-equal to the fork's
-# other ports.
+# other ports. joydb_remap.sv ships too: joydb.sv instantiates joydb_remap
+# (the programmable button-remap matrix), so without it the jt build fails
+# Error 12006 "instantiates undefined entity joydb_remap". jtframe consumes
+# raw joydb_1/joydb_2 in jtframe_joymux.v, so the matrix stays dormant
+# (outputs pruned) until a future jt Layer-B wires joydb_*_mapped -- but the
+# module must still be present for joydb.sv to elaborate. The jtcores
+# files.yaml must list it under the [MiSTer-DB9] block (one-time registration,
+# not managed here).
 #
 # joydb15.v is now synced too: canonical absorbed the `ifdef JTFRAME_SDRAM96`
 # branch (JCLOCKS[4] / /32 tick under 96 MHz clk) that previously kept jt's
@@ -47,6 +54,7 @@ SYNC_BASENAMES=(
     joydb9md.v
     joydb9saturn.v
     joydb15.v
+    joydb_remap.sv
 )
 declare -A SYNC_DEST_DIR=(
     [siphash24.v]="${JTFRAME_SYS_PATH}"
@@ -56,6 +64,7 @@ declare -A SYNC_DEST_DIR=(
     [joydb9md.v]="${JTFRAME_HDL_PATH}"
     [joydb9saturn.v]="${JTFRAME_HDL_PATH}"
     [joydb15.v]="${JTFRAME_HDL_PATH}"
+    [joydb_remap.sv]="${JTFRAME_HDL_PATH}"
 )
 
 if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
