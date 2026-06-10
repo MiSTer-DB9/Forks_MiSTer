@@ -17,6 +17,11 @@
 # non-ported / pristine upstream) is n/a -- there is no "legitimately
 # missing port" case (unlike satgate's InputTest 1'b1 tie), so this GATES.
 #
+# EXCEPTION -- OPTIONAL_PORTS (below): a few canonical ports are ADVISORY
+# OUTPUTS the WRAPPER_BLOCK deliberately does NOT emit (commit a79778f). An
+# unconnected output is harmless in Verilog (no silently-dead path), so a
+# core leaving one unbound is not a defect and must not FATAL here.
+#
 # Required-port set is parsed from the live canonical header, so it
 # auto-tracks if a port is ever added/removed there.
 #
@@ -52,6 +57,13 @@ _PORT_RE = re.compile(
     r"^\s*(?:input|output)\b[^,()\n]*?\b([A-Za-z_]\w*)\s*(?:,|$)", re.M)
 # A named-port connection `.ident(` inside the instance span.
 _CONN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*\(")
+
+# Outputs the canonical joydb module exposes as ADVISORY/optional --
+# consumers (e.g. jtcps1/jtcps2 SF2 row-swap) bind them, others leave them
+# unconnected (commit a79778f). Unlike an unbound INPUT (controller path goes
+# silently dead), an unconnected OUTPUT is harmless in Verilog, so it must not
+# FATAL the binding completeness guard.
+OPTIONAL_PORTS = {"pad_1_6btn", "pad_2_6btn"}
 
 
 def required_ports(core_dir=None):
@@ -139,14 +151,23 @@ def main(argv):
               f"{CANON_UMBRELLA} and {core_dir}/sys/joydb.sv)")
         return 2
 
-    missing = [p for p in req if p not in bound]
+    missing = [p for p in req if p not in bound and p not in OPTIONAL_PORTS]
     if missing:
         print(f"  joydb-bind: FAIL unbound canonical joydb port(s): "
               f"{', '.join(missing)} -- controller path silently dead  "
               f"[{cb}]")
         return 1
-    print(f"  joydb-bind: PASS  all {len(req)} canonical joydb ports bound  "
-          f"[{cb}]")
+    # Don't claim "all N bound" — an unbound OPTIONAL output passes the gate but
+    # is genuinely unconnected, so report the real bound count and name the
+    # skipped advisory ports.
+    opt_unbound = [p for p in req if p in OPTIONAL_PORTS and p not in bound]
+    if opt_unbound:
+        print(f"  joydb-bind: PASS  {len(req) - len(opt_unbound)} of "
+              f"{len(req)} canonical joydb ports bound; advisory output(s) "
+              f"left unbound (ok): {', '.join(opt_unbound)}  [{cb}]")
+    else:
+        print(f"  joydb-bind: PASS  all {len(req)} canonical joydb ports bound  "
+              f"[{cb}]")
     return 0
 
 

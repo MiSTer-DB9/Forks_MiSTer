@@ -48,6 +48,7 @@ SATGATE="${SCRIPT_DIR}/saturn_gate_check.py"
 JOYDBBIND="${SCRIPT_DIR}/joydb_binding_check.py"
 STATUSFB="${SCRIPT_DIR}/status_feedback_check.py"
 UOPROBE="${SCRIPT_DIR}/userout_probe_check.py"
+REMAPREG="${SCRIPT_DIR}/joydb_remap_consistency_check.py"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/step6.sh"
 
@@ -138,11 +139,22 @@ usage() { echo "usage: $0 {baseline|check} <core_dir>" >&2; exit 2; }
 #                  drivers (parse=2 fail-open). Delta cancels pre-existing
 #                  latent failures so only a merge that NEWLY introduces it
 #                  trips it.
+#   remapreg       joydb_remap_consistency_check.py FATAL (the core's
+#                  <core>.sv instantiates the joydb wrapper AND sys/joydb.sv
+#                  instantiates joydb_remap, but joydb_remap.sv is NOT
+#                  registered in sys.qip/sys.tcl -> Quartus Error 12006. The
+#                  00f49da class: a rerere mis-replay reverted the sys.qip
+#                  registration, then the sys/ helper sync re-installed a
+#                  joydb.sv that needs it. Instantiation-driven so a joydb-less
+#                  core (Menu) is n/a -- file-presence would false-positive
+#                  there. n/a for non-wrapper / pre-remap joydb.sv, parse=2
+#                  fail-open. Delta cancels pre-existing latent failures so only
+#                  a merge that NEWLY introduces it trips it.
 # All checks' non-gating FINDINGs exit 0 -> never tokenised, cannot wedge.
 compute_tokens() {
   local dir="$1"
   local pm rc=0 csv s6 jrc=0 mrc=0 src=0 jsrc=0 cfrc=0 crc=0 qrc=0
-  local mnrc=0 vprc=0 sgrc=0 jbrc=0 sfrc=0 uorc=0 toks=() id
+  local mnrc=0 vprc=0 sgrc=0 jbrc=0 sfrc=0 uorc=0 rrrc=0 toks=() id
   # canonical_drift_check is deliberately absent here (no canonical sys/ in
   # a fork repo — see header). Drift is gated by run_fleet_audit.sh / Tier-0.
   pm="$(python3 "$PORTMAP" "$dir" 2>&1)" || rc=$?
@@ -184,6 +196,8 @@ compute_tokens() {
     [ "$sfrc" -eq 1 ] && toks+=("statusfb")  # 1=FATAL; 2=parse (fail-open)
     python3 "$UOPROBE" "$dir" "$csv" >/dev/null 2>&1 || uorc=$?
     [ "$uorc" -eq 1 ] && toks+=("uoprobe")   # 1=FATAL; 2=parse (fail-open)
+    python3 "$REMAPREG" "$dir" "$csv" >/dev/null 2>&1 || rrrc=$?
+    [ "$rrrc" -eq 1 ] && toks+=("remapreg")  # 1=FATAL; 2=parse (fail-open)
   fi
   # No blocking failures → empty output, success. Same empty output on a rare
   # internal error; the caller is fail-open by design (delta cancels anything

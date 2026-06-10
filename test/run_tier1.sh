@@ -146,6 +146,14 @@ else
   note "joydb_binding_check selftest FAIL"; sed 's/^/    /' "$WORK/jb.log"; fail=1
 fi
 
+echo "== Tier 1: joydb_remap_consistency_check selftest (synth fixtures, no iverilog) =="
+if python3 "$HERE/lib/test_joydb_remap_consistency_check.py" >"$WORK/rr.log" 2>&1 \
+   && grep -q "REMAPREG selftest: PASS" "$WORK/rr.log"; then
+  note "joydb_remap_consistency_check selftest PASS"
+else
+  note "joydb_remap_consistency_check selftest FAIL"; sed 's/^/    /' "$WORK/rr.log"; fail=1
+fi
+
 echo "== Tier 1: forks_ini_check selftest (fixtures, no iverilog) =="
 if python3 "$HERE/lib/test_forks_ini_check.py" >"$WORK/fi.log" 2>&1 \
    && grep -q "FORKSINI selftest: PASS" "$WORK/fi.log"; then

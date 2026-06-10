@@ -82,6 +82,13 @@ configure_rerere
 # MERGE_HEAD and fabricate a bogus single-parent commit mislabeled as a merge
 # (which would corrupt the merge ancestry rerere training walks and push a fake
 # "merge" to origin/unstable).
+# Snapshot the post-catchup tip so the helper-integrity guard below can diff
+# strictly across the UPSTREAM merge, not across the master-catchup. (HEAD^1
+# would be wrong when the upstream merge is a no-op "Already up to date": HEAD
+# then stays the catchup commit and HEAD^1 is its parent, so a legitimate
+# helper edit propagated via the master-catchup — the very "fork master moved,
+# upstream frozen" rebuild trigger — would read as a revert and falsely abort.)
+PRE_UPSTREAM_MERGE_SHA="$(git rev-parse HEAD)"
 if ! git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
     -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}"; then
     if ! git rev-parse -q --verify MERGE_HEAD >/dev/null || git ls-files --unmerged | grep -q .; then
@@ -94,6 +101,16 @@ if ! git merge -Xignore-all-space --no-ff "${UPSTREAM_SHA}" \
     fi
     echo "rerere auto-resolved all conflicts; finalizing the unstable merge commit."
     git commit --no-edit -m "BOT: Unstable merge of upstream ${UPSTREAM_SHA7}"
+fi
+
+# fork-only sys/ helper integrity (fork-only). Diff the snapshot taken before
+# the upstream merge against HEAD; upstream carries none of these helpers, so any
+# diff is a rerere mis-replay reverting fork wiring (the 00f49da class). Skip
+# when the upstream merge was a no-op (HEAD unmoved) so a master-catchup helper
+# propagation isn't misread as a revert. Abort before the push to
+# origin/${UNSTABLE_BRANCH}, same path as the tripwire below.
+if [ "$(git rev-parse HEAD)" != "${PRE_UPSTREAM_MERGE_SHA}" ]; then
+    assert_fork_helpers_unchanged "${PRE_UPSTREAM_MERGE_SHA}" HEAD || { record_unstable_failure "${UPSTREAM_SHA}" "${MASTER_SHA}" || true; ./.github/notify_error.sh "UNSTABLE MERGE REVERTED FORK SYS HELPER" "$@"; }
 fi
 
 # status bit collision tripwire (fork-only)

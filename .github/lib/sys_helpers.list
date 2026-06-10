@@ -1,0 +1,22 @@
+# Fork-only sys/ helper sources — the DB9/SNAC/Saturn/key-gate HDL that does
+# NOT exist in MiSTer-devel upstream. One basename per line; blank lines and
+# `#` comments ignored.
+#
+# Single source of truth for two consumers (kept here so they can't drift):
+#   * setup_cicd.sh — the SYS_HELPERS propagation loop that cp's these from
+#     fork_ci_template/sys/ into each ported fork's sys/.
+#   * rerere_train.sh::assert_fork_helpers_unchanged — the post-merge guard.
+#     Upstream carries none of these, so any upstream-merge diff on them is a
+#     rerere mis-replay (the 00f49da class: a stale unstable-canary resolution
+#     replayed pre-feature text and reverted joydb.sv); the guard aborts.
+#
+# Symlinked into fork_ci_template/.github/sys_helpers.list so `cp -rL`
+# materialises it next to the propagated rerere_train.sh in every fork.
+joydb9md.v
+joydb15.v
+joydb9saturn.v
+joydb.sv
+joydb_remap.sv
+siphash24.v
+db9_key_gate.sv
+db9_key_secret.vh

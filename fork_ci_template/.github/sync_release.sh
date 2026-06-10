@@ -204,6 +204,13 @@ if ! git rev-parse -q --verify MERGE_HEAD >/dev/null && git diff --cached --quie
     exit 0
 fi
 
+# fork-only sys/ helper integrity (fork-only). The merge is --no-commit, so HEAD
+# is still the pre-merge tip; comparing it to the working tree catches a rerere
+# mis-replay that reverted joydb.sv / joydb_remap.sv / the key-gate sources
+# (the 00f49da class — invisible to the regression-delta gate below because the
+# revert is internally consistent). Abort before push, same path as the tripwire.
+assert_fork_helpers_unchanged HEAD || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM MERGE REVERTED FORK SYS HELPER" "$@"; }
+
 # status bit collision tripwire (fork-only)
 ./.github/check_status_collision.sh || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM STATUS BIT COLLISION" "$@"; }
 

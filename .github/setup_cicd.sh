@@ -81,7 +81,18 @@ setup_cicd_on_fork() {
     # Pristine upstream forks and Main_MiSTer (no sys/ tree) skip —
     # apply_db9_framework.sh is the only path that performs the initial
     # port and drops joydb9saturn.v.
-    SYS_HELPERS=(joydb9md.v joydb15.v joydb9saturn.v joydb.sv joydb_remap.sv siphash24.v db9_key_gate.sv db9_key_secret.vh)
+    # Fork-only sys/ helpers — single source of truth shared with the
+    # rerere_train.sh merge guard (.github/lib/sys_helpers.list, symlinked into
+    # fork_ci_template/.github/ so both consumers read the same list).
+    local -a SYS_HELPERS
+    mapfile -t SYS_HELPERS < <(grep -vE '^[[:space:]]*(#|$)' "fork_ci_template/.github/sys_helpers.list")
+    # A missing/unreadable list leaves SYS_HELPERS empty (grep in process
+    # substitution can't trip set -e), which would silently propagate ZERO sys/
+    # helpers fleet-wide while still reporting success. Fail loudly instead.
+    if [[ ${#SYS_HELPERS[@]} -eq 0 ]]; then
+        echo "::error::fork_ci_template/.github/sys_helpers.list missing or empty — refusing to run with no sys/ helpers to propagate." >&2
+        return 1
+    fi
     SYNC_SYS=0
     SYS_REL_DIR=""
     SATURN_HIT=$(find "${TEMP_DIR}" -maxdepth 4 -path '*/sys/joydb9saturn.v' -type f -print -quit 2>/dev/null)
@@ -96,6 +107,21 @@ setup_cicd_on_fork() {
         # the other helpers) is owned by the porter (apply_db9_framework.sh); a fork
         # whose sys.qip lacks the registration is an incomplete port and must be
         # re-ported, not patched here.
+        #
+        # But DO NOT silently ship a sync that would break the build: the copied
+        # joydb.sv instantiates joydb_remap unconditionally, so if this core's
+        # <core>.sv instantiates the joydb wrapper while its sys.qip never
+        # registered joydb_remap.sv, committing the new joydb.sv yields Quartus
+        # Error 12006 (the 00f49da -> af3471d class). Detect that and SKIP the
+        # helper commit (the fork stays at its prior consistent state); a re-port
+        # is the fix. Menu / joydb-less cores (no wrapper instance) are n/a.
+        local _core_dir _rr=0
+        _core_dir=$(dirname "${SYS_DIR}")
+        python3 test/lib/joydb_remap_consistency_check.py "${_core_dir}" >/dev/null 2>&1 || _rr=$?
+        if [[ ${_rr} -eq 1 ]]; then
+            echo "::warning::sys/ helper sync skipped for ${FORK_REPO}: installing joydb.sv would leave joydb_remap.sv unregistered for the elaborated joydb wrapper (Quartus Error 12006). Re-port with apply_db9_framework.sh."
+            SYNC_SYS=0
+        fi
     else
         echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (no */sys/joydb9saturn.v within depth 4)."
     fi

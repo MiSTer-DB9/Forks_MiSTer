@@ -77,3 +77,70 @@ train_rerere() {
         git checkout "${ORIGINAL_BRANCH#refs/heads/}"
     fi
 }
+
+# Absolute path to the fork-only helper list, resolved next to THIS script so it
+# works both in the umbrella (.github/lib/sys_helpers.list) and in a fork's
+# flattened .github/ (cp -rL materialises the symlinked list beside this file).
+_sys_helpers_list() {
+    echo "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sys_helpers.list"
+}
+
+# Post-merge guard against rerere replaying a STALE resolution that reverts fork
+# wiring (the 00f49da class: a canary "Update sys." resolution recorded before
+# the remap matrix landed replayed pre-feature text and dropped joydb.sv's
+# joydb_remap instance + the sys.qip registration). Such a revert is internally
+# CONSISTENT at merge time, so merge_validate's regression-delta gate sees no new
+# failure and the broken tree gets pushed; the later copy-only sys/ helper sync
+# then re-installs a joydb.sv that needs the dropped registration -> Error 12006.
+#
+# The fork-only sys/ helpers (sys_helpers.list) do NOT exist in MiSTer-devel
+# upstream, so a CORRECT upstream merge leaves every one byte-identical to the
+# pre-merge fork side. Any diff on them is therefore necessarily a mis-replay ->
+# abort the merge before it is pushed. False-positive-free: upstream has no side
+# to legitimately change these files.
+#
+#   assert_fork_helpers_unchanged <ref_before> [<ref_after>]
+# One ref  : diff <ref_before> vs the WORKING TREE  (stable: merge is
+#            --no-commit, HEAD still the pre-merge tip).
+# Two refs : diff <ref_before>..<ref_after>          (unstable: merge already
+#            committed, so ref_after=HEAD, ref_before=HEAD^1).
+# Returns 0 = all helpers unchanged; 1 (with a stderr report) = a helper changed.
+# Missing list (propagation bug) fails OPEN (warn + 0) so guard infra can't wedge
+# every sync.
+assert_fork_helpers_unchanged() {
+    local ref_before="$1" ref_after="${2:-}" list
+    list="$(_sys_helpers_list)"
+    if [ ! -f "${list}" ]; then
+        echo >&2 "assert_fork_helpers_unchanged: helper list ${list} missing — skipping guard (fail-open)"
+        return 0
+    fi
+    local -a helpers specs=()
+    mapfile -t helpers < <(grep -vE '^[[:space:]]*(#|$)' "${list}")
+    if [ "${#helpers[@]}" -eq 0 ]; then
+        # List present but empty (truncated to its comment header, or a bad
+        # propagation). With no basenames `specs` is empty and an unrestricted
+        # `git diff --name-only <ref>` would list EVERY changed file -> the
+        # `-z` test fails -> a guaranteed false abort on every sync. Fail OPEN
+        # like the missing-list case so broken guard infra can't wedge the fleet.
+        echo >&2 "assert_fork_helpers_unchanged: helper list ${list} has no entries — skipping guard (fail-open)"
+        return 0
+    fi
+    local b
+    for b in "${helpers[@]}"; do
+        # fnmatch pathspec. `*/<b>` matches the helper at any depth (they always
+        # live under */sys/ — setup_cicd.sh only ever copies them into a sys/
+        # dir); `*` spans `/`, and the leading `*/` requires a path separator so
+        # a `foo<b>` basename can't false-match.
+        specs+=("*/${b}")
+    done
+    local changed
+    if [ -n "${ref_after}" ]; then
+        changed="$(git diff --name-only "${ref_before}" "${ref_after}" -- "${specs[@]}")"
+    else
+        changed="$(git diff --name-only "${ref_before}" -- "${specs[@]}")"
+    fi
+    [ -z "${changed}" ] && return 0
+    echo >&2 "assert_fork_helpers_unchanged: upstream merge modified fork-only sys/ helper(s) that do NOT exist upstream — a rerere mis-replay reverted fork wiring:"
+    printf >&2 '  %s\n' "${changed}"
+    return 1
+}

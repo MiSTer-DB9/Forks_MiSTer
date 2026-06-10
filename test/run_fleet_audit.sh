@@ -58,6 +58,11 @@ STATUSFB="$HERE/lib/status_feedback_check.py"
 # OSD-open autodetect probe can't drive USER_IO from Off (the NES/SNES/PSX
 # 2026-06 class). n/a for non-joydb cores / plain-assign drivers.
 UOPROBE="$HERE/lib/userout_probe_check.py"
+# Gates (FATAL zero-FP by construction): if <core>.sv instantiates the joydb
+# wrapper AND sys/joydb.sv instantiates joydb_remap, then joydb_remap.sv must be
+# registered in sys.qip/sys.tcl or Quartus Error 12006 kills the build (the
+# 00f49da class). Instantiation-driven, so a joydb-less core (Menu) is n/a.
+REMAPREG="$HERE/lib/joydb_remap_consistency_check.py"
 # shellcheck source=lib/step6.sh
 source "$HERE/lib/step6.sh"
 # shellcheck source=lib/canonical_drift_check.sh
@@ -192,6 +197,11 @@ for c in "${cores[@]}"; do
   uo="$(python3 "$UOPROBE" "$ROOT/$c" "$csv" 2>&1)"; uorc=$?
   out+="$uo"$'\n'
   [ "$uorc" -eq 1 ] && cfail+="uoprobe "
+  # joydb_remap.sv registration gate (Error 12006 / 00f49da class). FATAL=1
+  # gates; n/a (Menu / pre-remap) / parse(2) do not.
+  rr="$(python3 "$REMAPREG" "$ROOT/$c" "$csv" 2>&1)"; rrrc=$?
+  out+="$rr"$'\n'
+  [ "$rrrc" -eq 1 ] && cfail+="remapreg "
   if [ -z "$cfail" ]; then
     pass=$((pass+1))
     if finds="$(printf '%s\n' "$out" | grep -E '(joydbmap|mt32gate|snac): FINDING')"; then
