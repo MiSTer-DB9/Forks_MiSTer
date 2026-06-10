@@ -92,15 +92,10 @@ setup_cicd_on_fork() {
         for f in "${SYS_HELPERS[@]}"; do
             cp "fork_ci_template/sys/${f}" "${SYS_DIR}/${f}"
         done
-        # joydb_remap.sv was added to SYS_HELPERS after most forks were ported,
-        # so their sys.qip lacks its registration line while the freshly-copied
-        # canonical joydb.sv already instantiates joydb_remap -> "Unknown module
-        # joydb_remap" at elaboration. Idempotently register it here (mirror of
-        # apply_db9_framework.sh) so propagation alone keeps every fork buildable.
-        if [[ -f "${SYS_DIR}/sys.qip" ]]; then
-            grep -Fwq joydb_remap.sv "${SYS_DIR}/sys.qip" \
-                || echo 'set_global_assignment -name SYSTEMVERILOG_FILE  [file join $::quartus(qip_path) joydb_remap.sv ]' >> "${SYS_DIR}/sys.qip"
-        fi
+        # NOTE: this step is copy-only. sys.qip registration of joydb_remap.sv (and
+        # the other helpers) is owned by the porter (apply_db9_framework.sh); a fork
+        # whose sys.qip lacks the registration is an incomplete port and must be
+        # re-ported, not patched here.
     else
         echo "  Skipping sys/ helper sync: ${FORK_REPO} not DB9-ported (no */sys/joydb9saturn.v within depth 4)."
     fi
