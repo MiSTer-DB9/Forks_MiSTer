@@ -1132,14 +1132,33 @@ LAYERB_EXCLUDE = frozenset({'Saturn', 'InputTest', 'X68000', 'Atari5200'})
 
 # Same intent as LAYERB_EXCLUDE but keyed on the CORE DIRECTORY name, for cores
 # whose emu sv is the generic `Template.sv` (so sv.stem can't single them out
-# without excluding every arcade Template.sv). Both read FIXED standard joystick
-# bits (joy[10/11/12] = Select/Start/L), NOT J1-sequential bits, so the matrix —
-# which emits a J1-ordered mapped[] word — cannot reproduce their merge:
-#   Arcade-Darius          — `{3'b0,[9],[6],[10],4'b0,[5],[4],[3:0]}` fixed-bit reorder
-#   Arcade-CityConnection  — `{[11],[9],[10],[5:0]}` reorder AND P1!=P2 (one shared
-#                            remap table can't drive two different per-player orders)
-# Keep their raw merge (Layer A dormant); Layer B by hand if ever needed.
-LAYERB_EXCLUDE_DIRS = frozenset({'Arcade-Darius_MiSTer', 'Arcade-CityConnection_MiSTer'})
+# without excluding every arcade Template.sv).
+#
+# NOTE — these arcades' merges read FIXED standard joystick bits (joy[10/11/12] =
+# Start/Coin/Pause), NOT the core's short/absent CONF_STR J1 positions. The earlier
+# belief that the matrix "emits a J1-ordered word and so can't reach 10/11/12" was
+# WRONG: db9_map_factory_default does not derive from the static CONF_STR J1, it
+# derives from get_buttons() -> ovr_buttons, i.e. the loaded game's MRA
+# `<buttons names=...>` (mra_loader.cpp set_ovr_buttons). An arcade MRA positions
+# Start/Coin/Pause with dashes (e.g. Darius = "Shot,Bomb,-,-,-,-,Start,Coin,Pause")
+# so the matrix DOES emit slots 10/11/12 — per game, matching USB. Layer B is the
+# strict improvement here (the old hand-wired perm was MRA-blind: one DB9 layout for
+# every game). Arcade-Darius + Arcade-TaitoF2 + Arcade-CityConnection are all
+# migrated to Layer B now, so this set is EMPTY. Two needed a HAND edit (not the
+# generic auto-swap), kept for the record:
+#   TaitoF2 — merge indirected through named `joydb_*_remap` wires with a dead Coin
+#     chord (`[11]|([10]&[5])`); the swap can't match a named-wire perm. Migrated by
+#     hand to `joydb_*_mapped[11:0]` (the chord's 2nd term was always 0 — joydb9md.v's
+#     Start+B Mode-inject sets raw11 and clears raw10/raw5 — so raw11 alone is exact).
+#   CityConnection — the old perm `{[11],[9],[10],[5:0]}` drove only joy[8:0], putting
+#     Start/Coin/Pause into DEAD bits 6/7/8 while the core reads the standard bits
+#     10/11/12, so DB9 Start/Coin/Pause never worked (and the P1!=P2 perm difference
+#     was an artifact of that). The auto-swap derives width from the old perm (9 bits
+#     -> `mapped[8:0]`, still missing 10-12), so it was migrated by hand to
+#     `joydb_*_mapped[12:0]`, which lands the buttons where the core reads them
+#     (symmetric by construction) and fixes the dead inputs.
+# Both hand-edited guards already contain `_mapped`, so a porter re-run no-ops on them.
+LAYERB_EXCLUDE_DIRS = frozenset()
 
 # Value-arm of the gameplay guard: `OSD_STATUS ? <zeros> :` then the PERM token.
 _LAYERB_ANCHOR_RE = re.compile(r'OSD_STATUS\s*\?\s*[^:{}]*:\s*')

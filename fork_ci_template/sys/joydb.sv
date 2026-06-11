@@ -86,14 +86,12 @@ module joydb
     // identity reset default. Additive: joydb_1/joydb_2 are unchanged so
     // un-migrated cores keep their hardcoded permutation.
     //
-    // NOTE: these ports + clk_sys are NOT yet bound by the porter WRAPPER_BLOCK
-    // (port_core_full.py) and there is no canonical hps_io.sv carrying the
-    // db9_remap_* outputs. The SNES pilot wires them by hand in SNES.sv /
-    // sys/hps_io.sv. On an un-migrated core they are left unconnected: remap_cmd
-    // ties low (matrix stays at identity, joydb_remap is pruned) and *_mapped
-    // dangle, so the feature is simply absent there. Fleet rollout requires
-    // teaching the porter to bind these and adding the db9_remap_* outputs to
-    // hps_io; until then re-porting a core will drop these bindings.
+    // The porter WRAPPER_BLOCK (port_core_full.py) binds these fleet-wide:
+    // add_joydb_remap_bindings wires clk_sys/remap_*/joydb_*_mapped on the joydb
+    // instance and add_hps_io_remap_bindings emits the db9_remap_* outputs into
+    // each sys/hps_io.sv (both idempotent across re-ports). A core that predates
+    // the bindings ties remap_cmd low (matrix stays at identity, joydb_remap is
+    // pruned, *_mapped dangle) so the feature is simply absent until re-ported.
     input  logic        remap_cmd,
     input  logic [5:0]  remap_byte_cnt,
     input  logic [15:0] remap_din,
