@@ -28,6 +28,51 @@ configure_rerere() {
     # to the working tree but left UNMERGED in the index, so the merge still
     # reports failure and the commit cannot proceed.
     git config --global rerere.autoupdate true
+    configure_mergiraf
+}
+
+# Syntax-aware merge driver (https://mergiraf.org) for HDL sources. Resolves the
+# "false conflict" class git's line merge can't: an upstream insertion adjacent
+# to a fork rename/marker block, independent decls added to the same region, etc.
+# Strictly additive to the rerere policy above:
+#   * The driver is fed the three full revisions as files (%O/%A/%B) — it does
+#     NOT read git's conflictstyle, so the 2-way `merge` style rerere depends on
+#     is untouched. Do NOT switch conflictstyle to diff3 for mergiraf's sake; it
+#     would break rerere's cross-branch preimage match (see the conflictstyle
+#     comment above).
+#   * A file mergiraf fully resolves produces no conflict, so rerere simply has
+#     nothing to record for it. A file mergiraf leaves conflicted falls through
+#     to rerere exactly as before. train_rerere's replay merges run through the
+#     same driver as the live merge, so preimages stay in lockstep.
+#   * mergiraf falls back to git's own line merge on parse error / timeout /
+#     unsupported extension, so the worst case is identical to not having it.
+# .v (Verilog) isn't a registered mergiraf language but is a near-subset of
+# SystemVerilog, so it is force-routed through the SV grammar (-L SystemVerilog);
+# the parse-error fallback covers the rare .v using an SV-reserved word as an
+# identifier. If mergiraf isn't installed this is a silent no-op (current
+# behaviour preserved) — the CI workflow installs it before the merge step.
+configure_mergiraf() {
+    command -v mergiraf >/dev/null 2>&1 || return 0
+    git config --global merge.mergiraf.name "mergiraf"
+    git config --global merge.mergiraf.driver \
+        'mergiraf merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L'
+    git config --global "merge.mergiraf-verilog.name" "mergiraf (Verilog as SystemVerilog)"
+    git config --global "merge.mergiraf-verilog.driver" \
+        'mergiraf merge --git -L SystemVerilog %O %A %B -s %S -x %X -y %Y -p %P -l %L'
+    # Repo-scoped, uncommitted attributes (the fork checkouts are upstream-tracked;
+    # a tracked .gitattributes would be a merge-compat surface). git-dir/info/
+    # attributes is rebuilt per CI run, like the rr-cache.
+    local gitdir attrs
+    gitdir="$(git rev-parse --git-dir 2>/dev/null)" || return 0
+    attrs="${gitdir}/info/attributes"
+    mkdir -p "${gitdir}/info" || return 0
+    if ! grep -q 'merge=mergiraf' "${attrs}" 2>/dev/null; then
+        {
+            echo '*.sv  merge=mergiraf'
+            echo '*.svh merge=mergiraf'
+            echo '*.v   merge=mergiraf-verilog'
+        } >> "${attrs}"
+    fi
 }
 
 train_rerere() {

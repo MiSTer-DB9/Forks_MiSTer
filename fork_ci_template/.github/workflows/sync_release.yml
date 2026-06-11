@@ -35,6 +35,11 @@ jobs:
     - name: Install verilator (coresv_lint gate)
       run: sudo apt-get update && sudo apt-get install -y verilator
 
+    # Syntax-aware merge driver for HDL false-conflicts; configure_rerere wires it
+    # in iff present, else the merge falls back to git's line merge (no-op).
+    - name: Install mergiraf (syntax-aware HDL merge)
+      uses: ./.github/actions/install-mergiraf
+
     - name: Sync with upstream
       run: ./.github/sync_release.sh <<MAINTAINER_EMAILS>>
       env:

@@ -1,0 +1,41 @@
+name: Install mergiraf
+description: >
+  Install the mergiraf syntax-aware merge driver (https://mergiraf.org) onto the
+  runner so the upstream-merge step resolves HDL "false conflicts" git's line
+  merge can't (an upstream insertion adjacent to a fork rename/marker block,
+  independent decls in the same region, ...).
+
+  configure_rerere() (rerere_train.sh) registers the merge driver + uncommitted
+  git-dir/info/attributes IFF `mergiraf` is on PATH; if this step is absent or
+  fails-open, that registration is a silent no-op and the merge falls back to
+  git's own line merge — i.e. exactly the pre-mergiraf behaviour. So a download
+  hiccup degrades gracefully rather than wedging the sync.
+
+  Pinned prebuilt binary (single static-ish ELF in the tarball) — no Rust
+  toolchain / cargo build needed.
+inputs:
+  version:
+    description: mergiraf release tag without the leading v
+    required: false
+    default: "0.17.0"
+runs:
+  using: composite
+  steps:
+    - name: Install mergiraf ${{ inputs.version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        ver='${{ inputs.version }}'
+        url="https://codeberg.org/mergiraf/mergiraf/releases/download/v${ver}/mergiraf_x86_64-unknown-linux-gnu.tar.gz"
+        tmp="$(mktemp -d)"
+        # Fail-open: a download/extract failure must NOT fail the job — the merge
+        # step still works via git's line merge (configure_mergiraf no-ops when
+        # mergiraf is absent). Emit a warning so it's visible in the run log.
+        if curl -fsSL --retry 3 -o "${tmp}/m.tgz" "${url}" \
+           && tar -xzf "${tmp}/m.tgz" -C "${tmp}" \
+           && sudo install -m 0755 "${tmp}/mergiraf" /usr/local/bin/mergiraf; then
+            mergiraf --version
+        else
+            echo "::warning::mergiraf ${ver} install failed — upstream merge will fall back to git's line merge"
+        fi
+        rm -rf "${tmp}"

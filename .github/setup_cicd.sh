@@ -159,7 +159,12 @@ setup_cicd_on_fork() {
             install_oras.sh
             emit_matrix.sh
         )
-        DROP_DIRS=(actions)
+        # Drop only the Quartus composite action; install-mergiraf is still
+        # referenced by sync_release.yml + unstable_release_make.yml on this
+        # channel, so dropping the whole actions/ dir would make those
+        # workflows reference a missing local action (hard failure, not the
+        # fail-open the merge driver promises).
+        DROP_DIRS=(actions/quartus-toolchain)
     else
         RELEASE_WORKFLOW="release.yml"
         UNSTABLE_WORKFLOW="unstable_release.yml"

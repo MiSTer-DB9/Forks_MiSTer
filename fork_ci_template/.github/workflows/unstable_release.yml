@@ -83,6 +83,12 @@ jobs:
       if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
       run: sudo apt-get update && sudo apt-get install -y verilator
 
+    # Syntax-aware merge driver for HDL false-conflicts; unstable_merge.sh's
+    # configure_rerere wires it in iff present, else git's line merge (no-op).
+    - name: Install mergiraf (syntax-aware HDL merge)
+      if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
+      uses: ./.github/actions/install-mergiraf
+
     - name: Merge upstream HEAD (once, pre fan-out)
       if: steps.preflight.outputs.skip != 'true' && steps.meta.outputs.skip_quartus != 'true'
       id: merge

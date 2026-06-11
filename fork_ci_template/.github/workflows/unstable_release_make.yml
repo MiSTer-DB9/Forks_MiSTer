@@ -40,6 +40,12 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # Syntax-aware merge driver for HDL false-conflicts; unstable_merge.sh's
+    # configure_rerere wires it in iff present, else git's line merge (no-op).
+    - name: Install mergiraf (syntax-aware HDL merge)
+      if: steps.preflight.outputs.skip != 'true'
+      uses: ./.github/actions/install-mergiraf
+
     - name: Merge upstream HEAD (once, pre fan-out)
       if: steps.preflight.outputs.skip != 'true'
       id: merge
