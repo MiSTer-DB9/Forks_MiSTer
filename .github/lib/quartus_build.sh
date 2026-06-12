@@ -98,7 +98,7 @@ _db9_timing_fail() {
     if [[ "${LABEL}" == "STABLE" ]]; then
         ./.github/notify_error.sh "STABLE TIMING REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}"
     else
-        ./.github/notify_error.sh "UNSTABLE TIMING REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
+        NOTIFY_LEVEL=warn ./.github/notify_error.sh "UNSTABLE TIMING REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
     fi
 }
 
@@ -244,8 +244,8 @@ _db9_seed_gate() {
     # never reseed.
     if (( SEED_MAX <= 0 )); then
         case "${rc}" in
-            3)  ./.github/notify_error.sh "${LABEL} TIMING REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
-            4)  ./.github/notify_error.sh "${LABEL} ALM REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
+            3)  NOTIFY_LEVEL=warn ./.github/notify_error.sh "${LABEL} TIMING REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
+            4)  NOTIFY_LEVEL=warn ./.github/notify_error.sh "${LABEL} ALM REGRESSION — report only, build NOT failed, seed search off (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true ;;
             *)  : ;;  # 0 = clean; anything else = couldn't compare, stay silent
         esac
         return 0
@@ -263,7 +263,7 @@ _db9_seed_gate() {
             fi
             ;;
         4)  # ALM-only regression — warn, never retry (reseed won't move synth ALMs)
-            ./.github/notify_error.sh "${LABEL} ALM REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
+            NOTIFY_LEVEL=warn ./.github/notify_error.sh "${LABEL} ALM REGRESSION (${CORE_NAME[i]} @ ${SHA7})" "${NOTIFY_ARGS[@]}" || true
             ;;
         *)  : ;;  # 0 = clean; anything else = couldn't compare, don't block
     esac
