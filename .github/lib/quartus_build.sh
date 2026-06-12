@@ -172,11 +172,19 @@ _db9_reseed_loop() {
 # timing reseed loop above never sees it. Quartus itself says a different fitter
 # seed (or Aggressive Routability) may route the design, and in practice a
 # routing-congestion failure on one seed routes on another (PSX unstable: the
-# DualSDRAM sibling leg routed while the main leg congested out). So when seed
-# search is enabled (SEED_MAX>0) and the failed compile's log carries the
-# fit/route signature, retry the compile with successive seeds until one yields
-# an RBF. Distinct from _db9_reseed_loop, which recovers a TIMING regression on
-# a build that already routed; this recovers a build that failed to route AT ALL.
+# DualSDRAM sibling leg routed while the main leg congested out).
+#
+# POLICY SPLIT — this is NOT the timing reseed:
+#   * A real fit/route failure (no RBF) MUST be retried — the alternative is
+#     shipping nothing. So this path is DEFAULT-ON, governed by its own knob
+#     FIT_RETRY_MAX (default 3); set it to 0 to disable for a core.
+#   * A timing regression (RBF exists, just degraded) only REPORTS by default —
+#     _db9_seed_gate / _db9_reseed_loop, gated on the separate opt-in
+#     SEED_RETRY_MAX (default 0). The two knobs are independent on purpose.
+# So when the failed compile's log carries the fit/route signature, retry the
+# compile with successive seeds until one yields an RBF. Distinct from
+# _db9_reseed_loop, which recovers a TIMING regression on a build that already
+# routed; this recovers a build that failed to route AT ALL.
 
 # True iff the captured compile log shows a fitter routing/fit failure (NOT a
 # generic Quartus error a reseed can't fix — syntax, missing file, license).
@@ -190,7 +198,7 @@ _db9_fit_signature() {
 
 # Reseed-and-recompile until a seed routes. Returns 0 once an RBF appears (the
 # qsf is restored, output left in place for the metrics parse), 1 if every seed
-# still failed to route. Seeds are reproducible (2..1+SEED_MAX), matching
+# still failed to route. Seeds are reproducible (2..1+FIT_MAX), matching
 # _db9_reseed_loop; like it, the winning seed is NOT persisted to the committed
 # qsf (the CI workspace is ephemeral — every rebuild re-runs the search).
 _db9_fit_retry_loop() {
@@ -200,8 +208,8 @@ _db9_fit_retry_loop() {
     }
     local seed
     cp "${QSF}" "${QSF}.db9orig"
-    for (( seed = 2; seed <= 1 + SEED_MAX; seed++ )); do
-        echo "Fit/route failure on ${REV}: retrying with SEED ${seed} (attempt $(( seed - 1 ))/${SEED_MAX})..."
+    for (( seed = 2; seed <= 1 + FIT_MAX; seed++ )); do
+        echo "Fit/route failure on ${REV}: retrying with SEED ${seed} (attempt $(( seed - 1 ))/${FIT_MAX})..."
         # Keep exactly one SEED line: drop any from the original qsf, append ours.
         grep -ivE '^[[:space:]]*set_global_assignment[[:space:]]+-name[[:space:]]+SEED[[:space:]]' \
             "${QSF}.db9orig" > "${QSF}" || true
@@ -368,10 +376,13 @@ build_cores() {
         MKEY="${CORE_NAME[i]}"
         METRICS_JSON="/tmp/${MKEY}_db9_metrics.json"
         BASE_JSON="/tmp/${MKEY}_db9_baseline.json"
-        # Seed search is OPT-IN per core: SEED_RETRY_MAX defaults to 0 (OFF).
-        # OFF => the timing gate is report-only (see _db9_seed_gate) AND a hard
-        # fit/route failure is NOT retried — it aborts the leg exactly as before.
+        # Two INDEPENDENT knobs (see _db9_fit_retry_loop's policy note):
+        #  SEED_MAX = timing-regression reseed — OPT-IN, default 0 (report-only).
+        #  FIT_MAX  = hard fit/route-failure reseed — DEFAULT-ON, default 3 (a
+        #             real fit failure ships no RBF, so it MUST be retried; set
+        #             FIT_RETRY_MAX=0 to disable for a specific core).
         local SEED_MAX="${SEED_RETRY_MAX:-0}" TMARGIN="${TIMING_MARGIN_NS:-0.5}" TRISK="${TIMING_RISK_FLOOR_NS:-1.0}"
+        local FIT_MAX="${FIT_RETRY_MAX:-3}"
 
         # attempt 0: unmodified qsf — byte-identical to the pre-gate build.
         # Capture the compile output (still streamed live via tee) so a hard
@@ -387,8 +398,8 @@ build_cores() {
         _crc="${PIPESTATUS[0]}"
         set -e
         if (( _crc != 0 )); then
-            if (( SEED_MAX > 0 )) && _db9_fit_signature "${_cclog}"; then
-                echo "::warning::${LABEL} fit/route congestion on ${CORE_NAME[i]} @ ${SHA7} — seed search (SEED_RETRY_MAX=${SEED_MAX})."
+            if (( FIT_MAX > 0 )) && _db9_fit_signature "${_cclog}"; then
+                echo "::warning::${LABEL} fit/route congestion on ${CORE_NAME[i]} @ ${SHA7} — seed search (FIT_RETRY_MAX=${FIT_MAX})."
                 _db9_fit_retry_loop || _notify_build_fail
             else
                 _notify_build_fail
