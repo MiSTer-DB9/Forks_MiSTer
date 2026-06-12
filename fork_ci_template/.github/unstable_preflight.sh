@@ -80,13 +80,39 @@ fi
 UNSTABLE_BRANCH_SHA_BEFORE=$(git rev-parse HEAD)
 
 # Catch up unstable with any stable-line progress since the last unstable run.
-# Conflicts here are rare (master advances only via stable's already-resolved
-# merges) but routed through notify_error.sh just in case.
+# The unstable branch's merge-base with master predates the CI framework and
+# the fork-only sys/ helpers, so every time master's setup_cicd advances those
+# they reappear as add/add catchup conflicts (the fleet-wide 2026-06-12 break).
+# Auto-resolve deterministically: the CI scripts (.github/**) and the fork-only
+# sys/ helpers (sys_helpers.list — upstream carries none of them) are canonical-
+# from-master by definition, so take master's copy; keep unstable's for every
+# other path (core HDL already has upstream HEAD merged — preserving it is what
+# keeps the canary's upstream resolution intact and avoids a from-scratch
+# upstream re-merge). Once committed, master becomes an ancestor of unstable, so
+# every later catchup is a clean fast-forward and this branch never re-hits it.
 if ! git merge-base --is-ancestor "${MASTER_SHA}" HEAD; then
-    git merge -Xignore-all-space --no-ff "${MASTER_SHA}" \
-        -m "BOT: Unstable catchup with ${MAIN_BRANCH} @ ${MASTER_SHA:0:7}" \
-        || { record_unstable_failure "${UPSTREAM_SHA}" "${MASTER_SHA}" || true; \
-             ./.github/notify_error.sh "UNSTABLE MASTER CATCHUP CONFLICT" "$@"; }
+    if ! git merge -Xignore-all-space --no-ff "${MASTER_SHA}" \
+            -m "BOT: Unstable catchup with ${MAIN_BRANCH} @ ${MASTER_SHA:0:7}"; then
+        echo "Catchup conflict — auto-resolving (.github + sys/ helpers <- ${MAIN_BRANCH}, rest <- unstable)."
+        git checkout "${MASTER_SHA}" -- .github 2> /dev/null || true
+        while IFS= read -r _helper; do
+            [[ -z "${_helper}" || "${_helper}" == \#* ]] && continue
+            git checkout "${MASTER_SHA}" -- "sys/${_helper}" 2> /dev/null || true
+        done < <(git show "${MASTER_SHA}:.github/sys_helpers.list" 2> /dev/null)
+        while IFS= read -r _path; do
+            [[ -z "${_path}" ]] && continue
+            git checkout --ours -- "${_path}" 2> /dev/null && git add -- "${_path}"
+        done < <(git diff --name-only --diff-filter=U)
+        git add -A
+        if git diff --cached --quiet || git diff --name-only --diff-filter=U | grep -q .; then
+            # nothing staged, or an unmergeable (e.g. modify/delete) path remained
+            git merge --abort 2> /dev/null || true
+            record_unstable_failure "${UPSTREAM_SHA}" "${MASTER_SHA}" || true
+            ./.github/notify_error.sh "UNSTABLE MASTER CATCHUP CONFLICT" "$@"
+        else
+            git commit -q -m "BOT: Unstable catchup with ${MAIN_BRANCH} @ ${MASTER_SHA:0:7} (auto: framework<-${MAIN_BRANCH})"
+        fi
+    fi
 fi
 
 # Cheap pre-check: if neither upstream's new commits, nor stable master's
