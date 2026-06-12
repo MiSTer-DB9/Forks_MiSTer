@@ -48,7 +48,7 @@ html_escape () {
 # "(<core> @ <sha7>)" suffix — see the caller taxonomy in quartus_build.sh etc.
 hashtags_for () {
     printf '%s' "$1" | python -c '
-import re, sys
+import os, re, sys
 reason = sys.stdin.read().strip()
 tags = []
 core = None
@@ -56,6 +56,13 @@ m = re.search(r"\(([^@()]+) @ [0-9a-fA-F]+\)\s*$", reason)
 if m:
     core = re.sub(r"[^A-Za-z0-9]", "_", m.group(1).strip()).strip("_")
     reason = reason[:m.start()].strip()
+else:
+    # Merge-time alerts carry no "(<core> @ <sha>)" — the fork repo itself names
+    # the core. Strip owner + trailing "_MiSTer" so the tag matches the per-core
+    # build alerts (repo "MiSTer-DB9/Arcade-IGSPGM_MiSTer" -> "#Arcade_IGSPGM").
+    repo = os.environ.get("GITHUB_REPOSITORY", "").rsplit("/", 1)[-1]
+    repo = re.sub(r"_MiSTer$", "", repo)
+    core = re.sub(r"[^A-Za-z0-9]", "_", repo).strip("_") or None
 # Drop a trailing qualifier ("— report only, ...") before tokenizing.
 reason = re.split(r"\s+[—-]\s+", reason, maxsplit=1)[0].strip()
 words = reason.split()
