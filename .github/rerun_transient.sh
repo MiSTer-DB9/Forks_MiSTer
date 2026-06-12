@@ -126,19 +126,35 @@ process_fork() {
             continue
         fi
 
-        # Pull failed-step log. --log-failed already scopes to the failing job.
-        local log_path
-        log_path="$(mktemp)"
-        if ! retry -n 2 -d 5 -- gh run view "${run_id}" --repo "${repo}" --log-failed > "${log_path}" 2>/dev/null; then
-            echo "[${fork_name}] run ${run_id} (${wf_name}, attempt ${attempt}): failed to fetch log — skipping"
-            rm -f "${log_path}"
-            continue
-        fi
+        # Look up the failing job id(s) up front: they double as check-run ids
+        # for the annotations API, and their step shapes give the runner-death
+        # backstop signal. databaseId alone (run level) isn't enough.
+        local jobs_json failed_job_ids
+        jobs_json="$(retry -n 2 -d 5 -- gh api "repos/${repo}/actions/runs/${run_id}/jobs" 2>/dev/null || true)"
+        failed_job_ids="$(printf '%s' "${jobs_json}" | jq -r '.jobs[]? | select(.conclusion=="failure") | .id' 2>/dev/null)"
 
-        # Tail-bound the log so grep stays cheap on large outputs.
-        local log_tail
-        log_tail="$(tail -c "${LOG_TAIL_BYTES}" "${log_path}")"
+        # Pull failed-step log. --log-failed already scopes to the failing job.
+        # SOFT: a borked runner (ENOSPC / preemption) crashes before uploading
+        # its log blob, so --log-failed exits non-zero with "log not found".
+        # That is the strongest transient signal there is — do NOT skip the run.
+        # Fall through with an empty log and classify off the annotations below.
+        local log_path log_tail=""
+        log_path="$(mktemp)"
+        if retry -n 2 -d 5 -- gh run view "${run_id}" --repo "${repo}" --log-failed > "${log_path}" 2>/dev/null; then
+            # Tail-bound the log so grep stays cheap on large outputs.
+            log_tail="$(tail -c "${LOG_TAIL_BYTES}" "${log_path}")"
+        fi
         rm -f "${log_path}"
+
+        # Annotations survive the runner death even when the log blob is gone,
+        # and carry the infra-failure text (e.g. "No space left on device") that
+        # TRANSIENT_RE already matches. Concatenate them as a second source.
+        local annotations="" jid a
+        for jid in ${failed_job_ids}; do
+            a="$(retry -n 2 -d 5 -- gh api "repos/${repo}/check-runs/${jid}/annotations" --jq '.[].message' 2>/dev/null || true)"
+            annotations+="${a}"$'\n'
+        done
+        local classify_text="${log_tail}"$'\n'"${annotations}"
 
         # Transient match is case-insensitive: GitHub Actions / docker / git
         # error strings vary in capitalization (e.g. "no space left on device"
@@ -147,11 +163,29 @@ process_fork() {
         # with a capital E, lowercasing risks matching unrelated "error code N"
         # noise from subtools.
         local has_transient=false has_real=false
-        if grep -iqE "${TRANSIENT_RE}" <<<"${log_tail}"; then
+        if grep -iqE "${TRANSIENT_RE}" <<<"${classify_text}"; then
             has_transient=true
         fi
-        if grep -qE "${REAL_RE}" <<<"${log_tail}"; then
+        if grep -qE "${REAL_RE}" <<<"${classify_text}"; then
             has_real=true
+        fi
+
+        # Backstop: neither source yielded any classifiable text. Within the 6h
+        # age window a log blob should not have expired, so a job that died
+        # mid-step (a null-conclusion step after at least one success) with no
+        # log and no annotations is almost certainly a borked runner. Treat as
+        # transient — the REAL_RE veto above still wins if real text was seen.
+        if [[ $has_transient == false && $has_real == false ]] \
+            && [[ -z "${log_tail//[$'\n\t ']/}" && -z "${annotations//[$'\n\t ']/}" ]]; then
+            local died_midstep
+            died_midstep="$(printf '%s' "${jobs_json}" | jq -r '
+                [.jobs[]? | select(.conclusion=="failure")
+                 | select(any(.steps[]?; .conclusion=="success")
+                          and any(.steps[]?; .conclusion==null))] | length' 2>/dev/null || echo 0)"
+            if [[ "${died_midstep:-0}" =~ ^[0-9]+$ ]] && (( died_midstep > 0 )); then
+                echo "[${fork_name}] run ${run_id} (${wf_name}, attempt ${attempt}): no log + no annotations, job died mid-step — treating as runner death (transient)"
+                has_transient=true
+            fi
         fi
 
         if $has_transient && [[ $has_real == false ]]; then
