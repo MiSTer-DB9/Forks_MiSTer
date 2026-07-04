@@ -178,14 +178,13 @@ jobs:
 
   publish:
     needs: [preflight, build]
-    # !cancelled() (not needs.build.result == 'success') so a partial set still
-    # publishes — fail-fast:false keeps siblings building. But require preflight
-    # to have SUCCEEDED: if preflight itself failed (e.g. unstable_merge.sh hit a
-    # merge conflict, exit 22), its outputs are empty, the '!= true' checks all
-    # pass, and publish would run with blank env and die at unstable_publish.sh's
-    # "UPSTREAM_SHA env not set" guard — a spurious second failure on top of the
-    # real one. preflight.result=='success' gates that out.
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
+    # Atomic publish: require EVERY build leg to have succeeded. fail-fast:false
+    # means needs.build.result is 'success' only when all matrix cores passed; a
+    # cancelled (concurrency-superseded) or failed leg makes it non-success, so no
+    # partial multi-core release ships. build.result=='success' also implies
+    # preflight succeeded and the build job ran, so the skip terms below are
+    # redundant but kept explicit.
+    if: ${{ needs.build.result == 'success' && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' && needs.preflight.outputs.skip_quartus != 'true' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -195,10 +194,10 @@ jobs:
 
     - name: Download built RBFs
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-      # zero artifacts (all legs failed) → empty dist/ → unstable_publish.sh
-      # no-ops. Also tolerates a transient download error the same way; the
-      # all-fail and flaky-download cases are intentionally indistinguishable
-      # for this partial-publish channel.
+      # continue-on-error so a transient download drop does not mask the real
+      # verdict: unstable_publish.sh asserts one RBF per expected core and exits
+      # non-zero (no publish, stanza not advanced) if any is missing, whether the
+      # leg failed or the artifact was lost in transit.
       continue-on-error: true
       with:
         pattern: rbf-*

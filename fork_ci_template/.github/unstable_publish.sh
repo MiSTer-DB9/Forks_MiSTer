@@ -38,10 +38,22 @@ TIMESTAMP="${TIMESTAMP:?TIMESTAMP env not set — should be a preflight job outp
 shopt -s nullglob
 UPLOAD_FILES=(dist/*)
 shopt -u nullglob
-if (( ${#UPLOAD_FILES[@]} == 0 )); then
-    echo "No RBFs in dist/ — every build leg failed (each already emailed via notify_error.sh)."
-    echo "Release body NOT advanced so sync_unstable.sh redispatches this upstream HEAD next tick."
-    exit 0
+
+# Atomic publish: every expected core must have produced its RBF. A missing one
+# means a build leg was cancelled/failed or its artifact was lost in transit.
+# Exit non-zero BEFORE any upload or write_release_body so no partial set ships
+# and the stanza is NOT advanced (sync_unstable.sh then redispatches this HEAD
+# next tick). The RBF name is "<core>_unstable_<ts>_<sha7>.rbf"; anchoring on the
+# "_unstable_" suffix keeps a core name that is a prefix of another (X68000 vs
+# X68000USERIO2) from matching its sibling.
+MISSING=()
+for c in "${CORE_NAME[@]}"; do
+    match=(dist/"${c}_unstable_"*.rbf)
+    [[ -e "${match[0]}" ]] || MISSING+=("${c}")
+done
+if (( ${#MISSING[@]} > 0 )); then
+    echo "Incomplete build set: missing RBF for ${MISSING[*]}. Nothing published, stanza NOT advanced so sync_unstable.sh redispatches this HEAD next tick." >&2
+    exit 1
 fi
 echo "Publishing $(printf '%s ' "${UPLOAD_FILES[@]##*/}")"
 
