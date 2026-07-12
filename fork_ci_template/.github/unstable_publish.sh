@@ -43,12 +43,14 @@ shopt -u nullglob
 # means a build leg was cancelled/failed or its artifact was lost in transit.
 # Exit non-zero BEFORE any upload or write_release_body so no partial set ships
 # and the stanza is NOT advanced (sync_unstable.sh then redispatches this HEAD
-# next tick). The RBF name is "<core>_unstable_<ts>_<sha7>.rbf"; anchoring on the
-# "_unstable_" suffix keeps a core name that is a prefix of another (X68000 vs
-# X68000USERIO2) from matching its sibling.
+# next tick). The asset name is "<core>_unstable_<ts>_<sha7>_DB9[.<ext>]";
+# anchoring on the "_unstable_" prefix keeps a core name that is a prefix of
+# another (X68000 vs X68000USERIO2) from matching its sibling, and matching the
+# make_build "_DB9" suffix (not a ".rbf" extension) covers Main_MiSTer, whose
+# binary asset is extensionless.
 MISSING=()
 for c in "${CORE_NAME[@]}"; do
-    match=(dist/"${c}_unstable_"*.rbf)
+    match=(dist/"${c}_unstable_"*_DB9*)
     [[ -e "${match[0]}" ]] || MISSING+=("${c}")
 done
 if (( ${#MISSING[@]} > 0 )); then

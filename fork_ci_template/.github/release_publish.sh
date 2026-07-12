@@ -44,13 +44,14 @@ shopt -u nullglob
 # Atomic publish: every expected core must have produced its RBF. A missing one
 # means a build leg was cancelled/failed or its artifact was lost in transit.
 # Fail here so no partial multi-core release ships (Distribution keeps the prior
-# complete set for every variant). The RBF name is
-# "<core>_<DATE_STAMP>_<sha7>_DB9.rbf"; anchoring on the "_<DATE_STAMP>_" suffix
-# keeps a core name that is a prefix of another (X68000 vs X68000USERIO2) from
-# matching its sibling.
+# complete set for every variant). The asset name is
+# "<core>_<DATE_STAMP>_<sha7>_DB9[.<ext>]"; anchoring on the "_<DATE_STAMP>_"
+# suffix keeps a core name that is a prefix of another (X68000 vs X68000USERIO2)
+# from matching its sibling, and matching the make_build "_DB9" suffix (not a
+# ".rbf" extension) covers Main_MiSTer, whose binary asset is extensionless.
 MISSING=()
 for c in "${CORE_NAME[@]}"; do
-    match=(dist/"${c}_${DATE_STAMP}_${BUILD_SHA7}"*.rbf)
+    match=(dist/"${c}_${DATE_STAMP}_${BUILD_SHA7}"*_DB9*)
     [[ -e "${match[0]}" ]] || MISSING+=("${c}")
 done
 if (( ${#MISSING[@]} > 0 )); then
