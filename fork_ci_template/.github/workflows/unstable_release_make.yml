@@ -99,7 +99,12 @@ jobs:
 
   publish:
     needs: [preflight, build]
-    if: ${{ !cancelled() && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' }}
+    # build.result=='success' implies preflight succeeded and the build job ran.
+    # !cancelled() did NOT: a failed preflight (e.g. UNSTABLE MERGE CONFLICT)
+    # skips build but leaves every preflight output empty, and publish then ran
+    # anyway and died on unstable_publish.sh's UPSTREAM_SHA:? assert. Matches
+    # the Quartus sibling unstable_release.yml.
+    if: ${{ needs.build.result == 'success' && needs.preflight.outputs.skip != 'true' && needs.preflight.outputs.merge_skip != 'true' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
