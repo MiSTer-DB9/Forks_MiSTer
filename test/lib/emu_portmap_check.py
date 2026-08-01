@@ -282,6 +282,41 @@ def declared_ports(core_sv: str, core_dir: str, defs):
     return all_ports, fork_ports
 
 
+# The joydb wrapper needs the FULL 8-bit user port. USER_IN[7] is both the
+# DB9MD presence line (joydb.sv `db9_status`) and bit 2 of the MD data bus
+# (`JOY_MDIN`). Declared [6:0], as upstream's sys/emu_ports.vh does, that bit
+# reads as a constant 0, so DB9MD latches "present" forever and Down reads as
+# permanently pressed: the OSD scrolls down with no pad plugged in. Every port
+# NAME is still present in that state, so the set-equality check above passes;
+# only the width betrays it. (C64, 2026-08.)
+JOYDB_INST = re.compile(r"^\s*joydb\s+\w+\s*\(", re.M)
+USER_PORT_W = re.compile(
+    r"""^\s*(?:input|output)\s+
+        (?:(?:reg|wire|logic)\s+)?
+        \[\s*(\d+)\s*:\s*0\s*\]\s*
+        (USER_IN|USER_OUT)\b
+    """,
+    re.X,
+)
+
+
+def user_port_widths(core_sv: str, core_dir: str, defs):
+    """{'USER_IN': msb, 'USER_OUT': msb} over the expanded emu port list.
+
+    Same expand_includes/_port_lines path as declared_ports, so it sees the
+    ports whether the core inlines its list or pulls sys/emu_ports.vh."""
+    body = strip_comments(open(core_sv, "r", errors="replace").read())
+    region = slice_paren_list(body.splitlines(), r"^\s*module\s+emu\b")
+    if region is None:
+        return {}
+    widths = {}
+    for raw, _in_fork in _port_lines(expand_includes(region, core_dir), defs):
+        m = USER_PORT_W.match(raw)
+        if m:
+            widths[m.group(2)] = int(m.group(1))
+    return widths
+
+
 def connected_ports(sys_top: str, defs):
     body = strip_comments(open(sys_top, "r", errors="replace").read())
     region = slice_paren_list(body.splitlines(), r"^\s*emu\s+emu\b")
@@ -327,7 +362,14 @@ def main(argv):
     missing = sorted(fork_ports - connected)   # fork port declared, not wired
     stale = sorted(connected - all_ports)      # wired to a non-existent port
 
-    if not missing and not stale:
+    # Width, not just presence: a joydb core with a 7-bit user port is broken.
+    narrow = []
+    if JOYDB_INST.search(strip_comments(open(core_sv, "r", errors="replace").read())):
+        for name, msb in sorted(user_port_widths(core_sv, core_dir, defs).items()):
+            if msb < 7:
+                narrow.append(f"{name}[{msb}:0]")
+
+    if not missing and not stale and not narrow:
         extra = "" if fork_ports else "  (no [MiSTer-DB9] emu ports?)"
         print(f"  portmap: ok   {len(fork_ports)} fork emu port(s) "
               f"connected, {len(connected)} conns valid  [{cb}]{extra}")
@@ -342,6 +384,11 @@ def main(argv):
         print("  portmap: FAIL connection(s) in sys_top.v `emu emu` with NO "
               f"matching port on the emu module in {cb} (stale/typo):")
         print("           " + ", ".join(stale))
+    if narrow:
+        print(f"  portmap: FAIL {cb} instantiates joydb but declares the user "
+              "port narrower than [7:0]; USER_IN[7] reads as constant 0, so "
+              "DB9MD latches present and Down sticks (OSD scrolls):")
+        print("           " + ", ".join(narrow))
     return 1
 
 
