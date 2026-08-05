@@ -112,6 +112,10 @@ _check_stable() {
     local MAIN_BRANCH="$6"
     local UPSTREAM_BRANCH="$7"
     local UPSTREAM_CORE_NAME="$8"
+    # Directory upstream publishes its built cores into. Default `releases`
+    # (MiSTer-devel convention); third-party upstreams may publish elsewhere
+    # (e.g. SYSTEM11 → release/_Arcade/cores).
+    local UPSTREAM_RELEASES_DIR="${9%/}"
 
     local UP_OWNER UP_NAME
     if [[ ${UPSTREAM_REPO} =~ github.com[:/]([^/]+)/([^/.]+) ]]; then
@@ -174,7 +178,7 @@ if matched:
     CONTENTS_JSON=$(retry -- curl -fsSL \
         -H "Authorization: token ${DISPATCH_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/contents/releases?ref=${UPSTREAM_BRANCH}" || echo "")
+        "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/contents/${UPSTREAM_RELEASES_DIR}?ref=${UPSTREAM_BRANCH}" || echo "")
     if [[ -n "${CONTENTS_JSON}" ]]; then
         local RELEASE_FILE
         RELEASE_FILE=$(printf '%s' "${CONTENTS_JSON}" | jq -r \
@@ -185,7 +189,7 @@ if matched:
             CURRENT_RELEASE_SHA=$(retry -- curl -fsSL \
                 -H "Authorization: token ${DISPATCH_TOKEN}" \
                 -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/commits?path=releases/${RELEASE_FILE}&sha=${UPSTREAM_BRANCH}&per_page=1" \
+                "https://api.github.com/repos/${UP_OWNER}/${UP_NAME}/commits?path=${UPSTREAM_RELEASES_DIR}/${RELEASE_FILE}&sha=${UPSTREAM_BRANCH}&per_page=1" \
                 | jq -r '.[0].sha // empty' 2>/dev/null || echo "")
         fi
     fi
@@ -328,6 +332,7 @@ check_and_dispatch() {
     local UPSTREAM_BRANCH="$6"
     local UPSTREAM_CORE_NAME="$7"
     local COMPILATION_INPUT="$8"
+    local UPSTREAM_RELEASES_DIR="$9"
 
     if [[ -z "${UPSTREAM_REPO}" ]]; then
         echo "[${fork_name}] no UPSTREAM_REPO — skipping (fork-only core)"
@@ -346,7 +351,8 @@ check_and_dispatch() {
     local rc=0
     if [[ "${MODE}" == "--stable" ]]; then
         _check_stable "${fork_name}" "${CORE_LIST}" "${UPSTREAM_REPO}" "${OWNER}" "${NAME}" \
-            "${MAIN_BRANCH}" "${UPSTREAM_BRANCH}" "${UPSTREAM_CORE_NAME}" || rc=$?
+            "${MAIN_BRANCH}" "${UPSTREAM_BRANCH}" "${UPSTREAM_CORE_NAME}" \
+            "${UPSTREAM_RELEASES_DIR}" || rc=$?
     else
         _check_unstable "${fork_name}" "${UPSTREAM_REPO}" "${OWNER}" "${NAME}" \
             "${MAIN_BRANCH}" "${UPSTREAM_BRANCH}" || rc=$?
@@ -392,7 +398,7 @@ else
     # the xargs children.
     for fork_name in ${Forks[${FORK_LIST_KEY}]}; do
         declare -n _fd="$fork_name"
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
             "$fork_name" \
             "${_fd[release_core_name]:-}" \
             "${_fd[upstream_repo]:-}" \
@@ -400,7 +406,8 @@ else
             "${_fd[main_branch]:-}" \
             "${_fd[upstream_branch]:-${_fd[main_branch]:-}}" \
             "${_fd[upstream_core_name]:-${_fd[release_core_name]:-}}" \
-            "${_fd[compilation_input]:-}"
+            "${_fd[compilation_input]:-}" \
+            "${_fd[upstream_releases_dir]:-releases}"
         unset -n _fd
     done > "${RESULTS_DIR}/forks.nul"
 
@@ -414,14 +421,14 @@ else
 
     echo "Syncing ${LABEL} START! (PARALLEL_JOBS=${PARALLEL_JOBS:-16})"
 
-    # shellcheck disable=SC2016 # $1..$8 inside the heredoc references xargs subshell args
-    xargs -0 -n 8 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
+    # shellcheck disable=SC2016 # $1..$9 inside the heredoc references xargs subshell args
+    xargs -0 -n 9 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/forks.nul" \
         bash -c '
             set -uo pipefail
             SAFE_NAME=$(printf "%s" "$1" | tr -c "[:alnum:]._-" "_")
             LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
             {
-                if ! check_and_dispatch "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"; then
+                if ! check_and_dispatch "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9"; then
                     echo "FORK FAILED: $1" >&2
                     printf "%s\n" "$1" > "${RESULTS_DIR}/${SAFE_NAME}.fail"
                 fi

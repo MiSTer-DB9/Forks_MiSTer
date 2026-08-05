@@ -27,10 +27,13 @@ set -uo pipefail
 # over the sibling core dirs, so REPO_ROOT is the umbrella tree:
 # test/lib -> test -> Forks_MiSTer -> MiSTer-DB9/.
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+# shellcheck source=list_cores.sh
+source "$(cd "$(dirname "$0")" && pwd)/list_cores.sh"
 cd "$REPO_ROOT"
 
 dirty=0
-for core in */; do
+mapfile -t CORE_DIRS < <({ printf '%s\n' */; list_subdir_cores; })
+for core in "${CORE_DIRS[@]}"; do
     core="${core%/}"
     case "$core" in
         Forks_MiSTer|porting|releases|.github|Documentation) continue ;;

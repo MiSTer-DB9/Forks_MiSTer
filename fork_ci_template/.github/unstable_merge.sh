@@ -30,6 +30,9 @@ source "${SCRIPT_DIR}/gha_emit.sh"
 # Consumed by the sourced unstable_lib.sh (UNSTABLE_BRANCH derivation).
 # shellcheck disable=SC2034
 MAIN_BRANCH="<<MAIN_BRANCH>>"
+# Subdirectory holding the Quartus project + <core>.sv. `.` for the usual
+# repo-root layout; a subdir for cores like SYSTEM11 (source/).
+CORE_DIR="<<CORE_DIR>>"
 
 # UNSTABLE_TAG / UNSTABLE_BRANCH / RETENTION + write_release_body; needs
 # MAIN_BRANCH set first.
@@ -59,7 +62,7 @@ echo
 # Snapshot the PRE-merge port-wiring failures (post-catchup unstable branch, =
 # the correct pre-upstream-merge state) so the gate below fails only on
 # regressions the upstream merge introduced. Best-effort — never blocks.
-./.github/merge_validate.sh baseline . || true
+./.github/merge_validate.sh baseline "${CORE_DIR}" || true
 
 # Re-assert the rerere/merge policy here too (defence-in-depth — preflight sets
 # these globals, but the finalize below depends on rerere.autoupdate, so don't
@@ -119,7 +122,7 @@ fi
 # post-merge port-validation gate (fork-only; regression-only). Runs before the
 # push + source-hash skip below, so a merge that breaks DB9 wiring never lands
 # on origin/${UNSTABLE_BRANCH} — exactly like the collision tripwire above.
-./.github/merge_validate.sh check . || ./.github/notify_error.sh "UNSTABLE MERGE BROKE PORT VALIDATION" "$@"
+./.github/merge_validate.sh check "${CORE_DIR}" || ./.github/notify_error.sh "UNSTABLE MERGE BROKE PORT VALIDATION" "$@"
 
 # Push the merge commits to origin/${UNSTABLE_BRANCH} before the build legs —
 # anchors the rerere-trained merge state (replayable next run even if Quartus

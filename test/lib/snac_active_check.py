@@ -54,6 +54,7 @@ SNAC_CORES = {
     "PSX_MiSTer": "snacPort1 | snacPort2",
     "Atari7800_MiSTer": "is_snac0 | is_snac1",
     "SGB_MiSTer": "snac_snes | snac_gb",
+    "SYSTEM11_MiSTer": "snacPort1 | snacPort2",
 }
 
 SNAC_ACTIVE_RE = re.compile(r"wire\s+snac_active\s*=\s*([^;]+);")
@@ -109,6 +110,14 @@ def main(argv):
         return 2
     core_dir = argv[1].rstrip("/")
     core_name = os.path.basename(core_dir)
+    # Cores whose Quartus project sits in a subdir of the fork repo (SYSTEM11 ->
+    # SYSTEM11_MiSTer/source) would key the table on the subdir name. Fall back to
+    # the parent dir so the fork name is what the table sees. Deliberately not a
+    # `.git` probe: this must keep working on a tarball export or a plain copy.
+    if core_name not in SNAC_CORES:
+        parent = os.path.basename(os.path.dirname(os.path.abspath(core_dir)))
+        if parent in SNAC_CORES:
+            core_name = parent
     if len(argv) == 3 and argv[2]:
         core_sv = os.path.join(core_dir, argv[2])
         if not os.path.isfile(core_sv):

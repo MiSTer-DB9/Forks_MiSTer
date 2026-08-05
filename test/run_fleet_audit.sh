@@ -26,6 +26,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"          # umbrella MiSTer-DB9/
+# shellcheck source=lib/list_cores.sh
+source "$HERE/lib/list_cores.sh"
 PORTMAP="$HERE/lib/emu_portmap_check.py"
 JOYDBMAP="$HERE/lib/joydb_map_check.py"
 MT32CHK="$HERE/lib/mt32_gate_check.py"
@@ -78,9 +80,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Enumerate ported cores = dirs with sys/joydb.sv.
-mapfile -t cores < <(cd "$ROOT" && for d in */sys/joydb.sv; do
-  [ -e "$d" ] && echo "${d%/sys/joydb.sv}"; done | sort)
+# Enumerate ported cores = dirs with sys/joydb.sv, plus the subdir-project cores
+# list_subdir_cores knows about (SYSTEM11_MiSTer/source).
+mapfile -t cores < <(cd "$ROOT" && { for d in */sys/joydb.sv; do
+  [ -e "$d" ] && echo "${d%/sys/joydb.sv}"; done
+  list_subdir_cores | while read -r c; do
+    [ -e "$c/sys/joydb.sv" ] && echo "$c"; done; } | sort)
 [ -n "$only" ] && cores=("$only")
 
 pass=0; failn=0; faillist=(); findn=0; findlist=()

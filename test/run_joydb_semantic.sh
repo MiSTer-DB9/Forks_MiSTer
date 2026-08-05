@@ -28,6 +28,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"          # umbrella MiSTer-DB9/
+# shellcheck source=lib/list_cores.sh
+source "$HERE/lib/list_cores.sh"
 CHECK="$HERE/lib/joydb_semantic_check.py"
 cd "$ROOT"
 
@@ -41,8 +43,10 @@ esac
 if [[ -n "$only" ]]; then
     cores=("$only")
 else
-    mapfile -t cores < <(for d in */sys/joydb.sv; do
-        [[ -e "$d" ]] && echo "${d%/sys/joydb.sv}"; done | sort)
+    mapfile -t cores < <({ for d in */sys/joydb.sv; do
+        [[ -e "$d" ]] && echo "${d%/sys/joydb.sv}"; done
+        list_subdir_cores | while read -r c; do
+            [[ -e "$c/sys/joydb.sv" ]] && echo "$c"; done; } | sort)
 fi
 
 clean=0; fatal=0; warn=0; info=0; parse=0

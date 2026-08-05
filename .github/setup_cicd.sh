@@ -42,6 +42,14 @@ setup_cicd_on_fork() {
     # LAST_QUARTUS_VERSION; a per-section Forks.ini value (e.g. "17.0std")
     # pins it. Native Standard is the only FPGA build path now.
     local QUARTUS_NATIVE="${12:-auto}"
+    # Directory the upstream repo publishes its built cores into. `releases` is
+    # the MiSTer-devel convention; third-party upstreams may publish elsewhere
+    # (e.g. misteraddons/SYSTEM11_MiSTer → release/_Arcade/cores).
+    local UPSTREAM_RELEASES_DIR="${13:-releases}"; UPSTREAM_RELEASES_DIR="${UPSTREAM_RELEASES_DIR%/}"
+    # Subdirectory holding the Quartus project + <core>.sv, for cores whose
+    # project root is not the repo root (e.g. SYSTEM11 → source/). `.` = today's
+    # behaviour for every other fork.
+    local CORE_DIR="${14:-.}"; CORE_DIR="${CORE_DIR%/}"
 
     if ! [[ ${FORK_REPO} =~ ^([a-zA-Z]+://)?github.com(:[0-9]+)?/([a-zA-Z0-9_-]*)/([a-zA-Z0-9_-]*)(\.[a-zA-Z0-9]+)?$ ]] ; then
         >&2 echo "Wrong fork repository url '${FORK_REPO}'."
@@ -191,6 +199,8 @@ setup_cicd_on_fork() {
         -e "s%<<COMPILATION_INPUT>>%${COMPILATION_INPUT}%g" \
         -e "s%<<COMPILATION_OUTPUT>>%${COMPILATION_OUTPUT}%g" \
         -e "s%<<RELEASE_WORKFLOW>>%${RELEASE_WORKFLOW}%g" \
+        -e "s%<<UPSTREAM_RELEASES_DIR>>%${UPSTREAM_RELEASES_DIR}%g" \
+        -e "s%<<CORE_DIR>>%${CORE_DIR}%g" \
         ${TEMP_DIR}/.github/sync_release.sh
     sed -i \
         -e "s%<<MAINTAINER_EMAILS>>%${MAINTAINER_EMAILS}%g" \
@@ -201,6 +211,7 @@ setup_cicd_on_fork() {
     # same contract as quartus_build.sh / retry.sh.
     sed -i \
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
+        -e "s%<<CORE_DIR>>%${CORE_DIR}%g" \
         ${TEMP_DIR}/.github/unstable_merge.sh
     sed -i \
         -e "s%<<RELEASE_CORE_NAME>>%${RELEASE_CORE_NAME}%g" \
@@ -245,6 +256,7 @@ setup_cicd_on_fork() {
         -e "s%<<MAIN_BRANCH>>%${MAIN_BRANCH}%g" \
         -e "s%<<UPSTREAM_REPO>>%${UPSTREAM_REPO}%g" \
         -e "s%<<UPSTREAM_BRANCH>>%${UPSTREAM_BRANCH}%g" \
+        -e "s%<<UPSTREAM_RELEASES_DIR>>%${UPSTREAM_RELEASES_DIR}%g" \
         ${TEMP_DIR}/.github/workflows/${RELEASE_WORKFLOW}
 
     DID_COMMIT=0
@@ -341,6 +353,10 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
     # the primary like QUARTUS_IMAGE above.
     _QUARTUS_NATIVE="${_primary[quartus_native]:-auto}"
     _MAINTAINER_EMAILS="${_primary[maintainer_emails]}"
+    # Upstream published-cores dir + core project subdir (per-section, optional).
+    # Siblings sharing a repo follow the primary, like QUARTUS_NATIVE above.
+    _UPSTREAM_RELEASES_DIR="${_primary[upstream_releases_dir]:-releases}"
+    _CORE_DIR="${_primary[core_dir]:-.}"
     unset -n _primary
 
     _RELEASE_CORE_NAMES=""
@@ -367,7 +383,7 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         unset -n _fd
     done
 
-    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+    printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
         "$_RELEASE_CORE_NAMES" \
         "$_UPSTREAM_REPO" \
         "$_FORK_REPO" \
@@ -379,7 +395,9 @@ for _group_key in "${!REPO_FORKS_MAP[@]}"; do
         "$_MAINTAINER_EMAILS" \
         "$_EXTRA_SOURCE_GLOBS" \
         "$_UPSTREAM_CORE_NAMES" \
-        "$_QUARTUS_NATIVE"
+        "$_QUARTUS_NATIVE" \
+        "$_UPSTREAM_RELEASES_DIR" \
+        "$_CORE_DIR"
 done > "${RESULTS_DIR}/groups.nul"
 
 export -f setup_cicd_on_fork retry
@@ -387,14 +405,14 @@ export DISPATCH_USER DISPATCH_TOKEN GITHUB_REPOSITORY GITHUB_SHA RESULTS_DIR QUA
 
 # Network-bound; 16-way default fits the runner's bandwidth and well under
 # GitHub's per-user rate limit. Override via PARALLEL_JOBS env.
-xargs -0 -n 12 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
+xargs -0 -n 14 -P "${PARALLEL_JOBS:-16}" -a "${RESULTS_DIR}/groups.nul" \
     bash -c '
         set -uo pipefail
         SAFE_NAME=$(printf "%s" "$3" | tr -c "[:alnum:]._-" "_")
         LOG="${RESULTS_DIR}/${SAFE_NAME}.log"
         {
             echo "Setting up CI/CD for $3 (cores: $1)..."
-            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}"; then
+            if setup_cicd_on_fork "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}"; then
                 rc=0
             else
                 rc=$?

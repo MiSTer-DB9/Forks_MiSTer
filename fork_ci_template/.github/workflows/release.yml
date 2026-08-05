@@ -103,6 +103,7 @@ jobs:
         MAIN_BRANCH: <<MAIN_BRANCH>>
         UPSTREAM_REPO: <<UPSTREAM_REPO>>
         UPSTREAM_BRANCH: <<UPSTREAM_BRANCH>>
+        UPSTREAM_RELEASES_DIR: <<UPSTREAM_RELEASES_DIR>>
         BUILD_SHA: ${{ steps.meta.outputs.build_sha }}
 
   build:

@@ -42,6 +42,10 @@ MAIN_BRANCH="${MAIN_BRANCH:?MAIN_BRANCH env not set}"
 UPSTREAM_REPO="${UPSTREAM_REPO:-}"
 UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-master}"
 BUILD_SHA="${BUILD_SHA:?BUILD_SHA env not set — should be a preflight job output}"
+# Directory upstream publishes its built cores into (Forks.ini
+# UPSTREAM_RELEASES_DIR; `releases` is the MiSTer-devel convention).
+UPSTREAM_RELEASES_DIR="${UPSTREAM_RELEASES_DIR:-releases}"
+UPSTREAM_RELEASES_DIR="${UPSTREAM_RELEASES_DIR%/}"
 TAG_PREFIX="stable/${MAIN_BRANCH}/"
 
 # fork-only cores have no upstream — nothing to derive, leave inherit/blank.
@@ -90,7 +94,7 @@ if ! mb=$(git merge-base "${BUILD_SHA}" "upstream/${UPSTREAM_BRANCH}" 2>/dev/nul
     exit 0
 fi
 
-rel=$(git log -n 1 --format=%H "${mb}" -- releases/ 2>/dev/null || true)
+rel=$(git log -n 1 --format=%H "${mb}" -- "${UPSTREAM_RELEASES_DIR}/" 2>/dev/null || true)
 
 emit_out derived_upstream_head_at_sync "${mb}"
 emit_out derived_upstream_release_sha "${rel}"

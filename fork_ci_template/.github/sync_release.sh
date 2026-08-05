@@ -20,6 +20,13 @@ MAIN_BRANCH="<<MAIN_BRANCH>>"
 UPSTREAM_BRANCH="<<UPSTREAM_BRANCH>>"
 COMPILATION_INPUT=(<<COMPILATION_INPUT>>)
 COMPILATION_OUTPUT=(<<COMPILATION_OUTPUT>>)
+# Directory upstream publishes its built cores into. `releases` is the
+# MiSTer-devel convention; third-party upstreams may publish elsewhere (e.g.
+# misteraddons/SYSTEM11_MiSTer → release/_Arcade/cores).
+UPSTREAM_RELEASES_DIR="<<UPSTREAM_RELEASES_DIR>>"
+# Subdirectory holding the Quartus project + <core>.sv. `.` for the usual
+# repo-root layout; a subdir for cores like SYSTEM11 (source/).
+CORE_DIR="<<CORE_DIR>>"
 
 # fork-only cores have no upstream; sync_release is a no-op
 if [[ -z "${UPSTREAM_REPO}" ]]; then
@@ -68,12 +75,12 @@ git checkout -qf "remotes/upstream/${UPSTREAM_BRANCH}"
 
 # grep miss on releases/ → pipefail + set -e would abort the sync; tolerate
 # an empty match so first-ever syncs (no prior build artifact) proceed.
-NEW_RELEASE_FILE=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
-COMMIT_TO_MERGE=$(git log -n 1 --pretty=format:%H -- "releases/${NEW_RELEASE_FILE}")
+NEW_RELEASE_FILE=$(cd "${UPSTREAM_RELEASES_DIR}" ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[0]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
+COMMIT_TO_MERGE=$(git log -n 1 --pretty=format:%H -- "${UPSTREAM_RELEASES_DIR}/${NEW_RELEASE_FILE}")
 
 UPSTREAM_CORE_FILES=()
 for i in "${!CORE_NAME[@]}"; do
-    UPSTREAM_CORE_FILES[i]=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
+    UPSTREAM_CORE_FILES[i]=$(cd "${UPSTREAM_RELEASES_DIR}" ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${UPSTREAM_CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
 done
 
 export GIT_MERGE_AUTOEDIT=no
@@ -93,7 +100,7 @@ git checkout -qf "${MAIN_BRANCH}"
 ORIGIN_CORE_FILES=()
 NEED_REBUILD=false
 for i in "${!CORE_NAME[@]}"; do
-    ORIGIN_CORE_FILES[i]=$(cd releases/ ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
+    ORIGIN_CORE_FILES[i]=$(cd "${UPSTREAM_RELEASES_DIR}" ; git ls-files -z | xargs -0 -n1 -I{} -- git log -1 --format="%ai {}" {} | grep "${CORE_NAME[i]}" | sort | tail -n1 | awk '{ print substr($0, index($0,$4)) }' || true)
     if [[ -n "${UPSTREAM_CORE_FILES[i]}" && "${UPSTREAM_CORE_FILES[i]}" != "${ORIGIN_CORE_FILES[i]}" ]]; then
         NEED_REBUILD=true
     fi
@@ -171,7 +178,7 @@ echo
 # Snapshot the PRE-merge port-wiring failures so the post-merge gate below can
 # fail only on regressions the upstream merge itself introduced (best-effort —
 # a bad baseline must never block the sync).
-./.github/merge_validate.sh baseline . || true
+./.github/merge_validate.sh baseline "${CORE_DIR}" || true
 
 # `git merge` exits non-zero after ANY conflict — even when rerere auto-resolved
 # and staged every one (autoupdate). A non-zero exit is safe to proceed past ONLY
@@ -217,7 +224,7 @@ assert_fork_helpers_unchanged HEAD || { record_stable_failure "${COMMIT_TO_MERGE
 # post-merge port-validation gate (fork-only; regression-only). Aborts before
 # the merge is committed/pushed to ${MAIN_BRANCH}, exactly like the collision
 # tripwire above.
-./.github/merge_validate.sh check . || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"; }
+./.github/merge_validate.sh check "${CORE_DIR}" || { record_stable_failure "${COMMIT_TO_MERGE}" || true; ./.github/notify_error.sh "UPSTREAM MERGE BROKE PORT VALIDATION" "$@"; }
 
 git submodule update --init --recursive
 

@@ -20,13 +20,16 @@ if [[ ! -x "${SCRIPT}" ]]; then
     exit 2
 fi
 
+# shellcheck source=list_cores.sh
+source "$(cd "$(dirname "$0")" && pwd)/list_cores.sh"
 cd "${REPO_ROOT}"
 
 CLEAN=()
 DIRTY=()
 SKIPPED=()
 
-for core_dir in */; do
+mapfile -t CORE_DIRS < <({ printf '%s\n' */; list_subdir_cores; })
+for core_dir in "${CORE_DIRS[@]}"; do
     core_dir="${core_dir%/}"
     # Skip non-core dirs
     case "${core_dir}" in
