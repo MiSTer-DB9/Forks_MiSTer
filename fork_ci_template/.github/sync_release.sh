@@ -141,7 +141,14 @@ do
 		# Skip non-merges
 		continue
 	fi
-	git checkout -q "${parent1}^0"
+	# -f: a historical commit can carry a blob whose line endings disagree
+	# with the repo's .gitattributes (e.g. a CRLF *.md under `eol=lf`).
+	# Checking such a commit out leaves that file permanently "modified"
+	# (worktree LF vs index CRLF blob), and the NEXT plain checkout then
+	# aborts with "local changes would be overwritten", killing the whole
+	# training walk. Forcing the checkout keeps the replay going; the
+	# affected file is never one of the DB9 conflict files.
+	git checkout -q -f "${parent1}^0"
 	# MUST mirror the live merge below (line ~178 uses -Xignore-all-space).
 	# rerere keys on the rendered conflict text; replaying with a plain merge
 	# segments hunks differently than the -Xignore-all-space live merge, so the
@@ -167,9 +174,9 @@ done
 
 if test -z "${ORIGINAL_BRANCH}"
 then
-	git checkout "${ORIGINAL_HEAD}"
+	git checkout -f "${ORIGINAL_HEAD}"
 else
-	git checkout "${ORIGINAL_BRANCH#refs/heads/}"
+	git checkout -f "${ORIGINAL_BRANCH#refs/heads/}"
 fi
 
 echo "END rerere-train.sh"

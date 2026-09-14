@@ -71,10 +71,14 @@ MASTER_SHA=$(git rev-parse HEAD)
 # the stable invariant (master pinned to last-released upstream commit) holds.
 if git ls-remote --exit-code origin "refs/heads/${UNSTABLE_BRANCH}" >/dev/null 2>&1; then
     retry -- git fetch --no-tags origin "refs/heads/${UNSTABLE_BRANCH}:refs/remotes/origin/${UNSTABLE_BRANCH}"
-    git checkout -B "${UNSTABLE_BRANCH}" "origin/${UNSTABLE_BRANCH}"
+    # -f for the same reason line 65 uses it: a blob whose line endings
+    # disagree with .gitattributes (a CRLF *.md under `eol=lf`) shows up as a
+    # local modification straight out of actions/checkout, and a plain checkout
+    # then aborts with "local changes would be overwritten".
+    git checkout -f -B "${UNSTABLE_BRANCH}" "origin/${UNSTABLE_BRANCH}"
 else
     echo "No origin/${UNSTABLE_BRANCH} yet — bootstrapping from ${MAIN_BRANCH}."
-    git checkout -B "${UNSTABLE_BRANCH}" "${MASTER_SHA}"
+    git checkout -f -B "${UNSTABLE_BRANCH}" "${MASTER_SHA}"
     retry -- git push origin "${UNSTABLE_BRANCH}"
 fi
 UNSTABLE_BRANCH_SHA_BEFORE=$(git rev-parse HEAD)
