@@ -41,7 +41,14 @@ WT="$(cd "${WT}" && pwd)"
 branch="$(git -C "${WT}" rev-parse --abbrev-ref HEAD)"
 case "${branch}" in
     unstable/*) ;;
-    *) echo >&2 "refusing: ${WT} is on '${branch}', not an unstable/* branch"; exit 2 ;;
+    # A detached worktree is a throwaway scratch checkout, so the same
+    # resolution is safe there. That is how the stable side uses this script:
+    # detach at origin/<MAIN_BRANCH>, resolve the same "Update sys." shape
+    # against the upstream RELEASE commit, then commit and push by hand. The
+    # guard exists to keep this off a canonical clone's own master checkout,
+    # which a detached worktree is not.
+    HEAD) ;;
+    *) echo >&2 "refusing: ${WT} is on '${branch}', not an unstable/* branch or a detached worktree"; exit 2 ;;
 esac
 if [[ -n "$(git -C "${WT}" status --porcelain)" ]]; then
     echo >&2 "refusing: worktree ${WT} is dirty — commit/stash/clean first"; exit 2
@@ -53,7 +60,7 @@ git -C "${WT}" fetch --no-tags origin >/dev/null 2>&1 || true
 git -C "${WT}" fetch --no-tags upstream >/dev/null 2>&1 || true
 
 if git -C "${WT}" merge -Xignore-all-space --no-ff "${UPSTREAM_REF}" \
-        -m "BOT: Unstable merge of ${UPSTREAM_REF} (Update sys. resolution)" >/dev/null 2>&1; then
+        -m "BOT: Merging upstream ${UPSTREAM_REF} (Update sys. resolution)" >/dev/null 2>&1; then
     echo "RESULT clean-merge: no conflict (nothing to resolve) — review + build + push."
     exit 0
 fi
@@ -84,14 +91,18 @@ for sv in "${core_svs[@]}"; do
 import sys
 p=sys.argv[1]
 out=[]; mode='keep'   # keep=outside conflict, ours=HEAD side, skip=base/theirs side
-for line in open(p,encoding='utf-8',errors='surrogateescape'):
-    s=line.rstrip('\n')
+# newline='' on both ends: several cores keep <core>.sv with CRLF endings, and
+# Python's default universal-newline translation would rewrite the whole file to
+# LF. That is invisible EOL churn across an upstream-tracked file, which is
+# exactly what the no-reformat merge rule forbids.
+for line in open(p,encoding='utf-8',errors='surrogateescape',newline=''):
+    s=line.rstrip('\r\n')   # CRLF-safe: markers must still match in a CRLF file
     if s.startswith('<<<<<<< '): mode='ours'; continue
     if s.startswith('||||||| '): mode='skip'; continue   # diff3 base section
     if s=='=======' or s.startswith('======= '): mode='skip'; continue
     if s.startswith('>>>>>>> '): mode='keep'; continue
     if mode in ('keep','ours'): out.append(line)
-open(p,'w',encoding='utf-8',errors='surrogateescape').writelines(out)
+open(p,'w',encoding='utf-8',errors='surrogateescape',newline='').writelines(out)
 PY
     git -C "${WT}" add -- "${sv}"
     echo "  ${sv}: kept OUR inline emu port list, preserved upstream body (hunk-level keep-ours)"
@@ -188,7 +199,95 @@ if [[ -n "${marked}" ]]; then
     exit 1
 fi
 
-# Step 5 — name-keyed emu port diff: emu_ports.vh (upstream) vs the inline list in
+# Step 4-bis: line endings follow UPSTREAM. A fork branch can carry a whole-file
+# EOL flip (an earlier resolver flattened CRLF to LF, or the reverse), and
+# merging that forward rewrites every line of the file against upstream: not
+# reviewable, and a guaranteed conflict on the next sync. Put each staged file
+# back onto the merged-in ref's EOL style. Fork-only paths and binaries are left
+# alone.
+realigned=0
+git -C "${WT}" rev-parse --verify -q "${UPSTREAM_REF}^{commit}" >/dev/null && realigned=1
+(( realigned )) && \
+python3 - "${WT}" "${UPSTREAM_REF}" <<'PY'
+import subprocess, sys, os
+wt, ref = sys.argv[1], sys.argv[2]
+def git(*a, **k): return subprocess.run(['git','-C',wt,*a], capture_output=True, **k)
+staged = git('diff','--cached','--name-only', text=True).stdout.split('\n')
+fixed = []
+for f in filter(None, staged):
+    up = git('cat-file','-p', f'{ref}:{f}')
+    if up.returncode:
+        continue                      # fork-only path, nothing upstream to match
+    ref_b = up.stdout
+    if b'\x00' in ref_b[:8000]:
+        continue                      # binary
+    p = os.path.join(wt, f)
+    try:
+        cur = open(p,'rb').read()
+    except OSError:
+        continue
+    if b'\x00' in cur[:8000]:
+        continue
+    want_crlf = ref_b.count(b'\r\n') > ref_b.count(b'\n') - ref_b.count(b'\r\n')
+    lf = cur.replace(b'\r\n', b'\n')
+    new = lf.replace(b'\n', b'\r\n') if want_crlf else lf
+    if new != cur:
+        open(p,'wb').write(new)
+        git('add','--', f)
+        fixed.append(f)
+if fixed:
+    print('  EOL realigned to ' + ref + ': ' + ' '.join(fixed))
+PY
+
+# The raw/normalized gap is expected and is only reported: a merge stages
+# upstream's blobs verbatim, so a core whose master was flattened under a
+# `* text=auto eol=lf` .gitattributes legitimately picks upstream's CRLF back up
+# (and the realignment above deliberately does the same for the files it
+# rewrites). CI's own merge produces the identical result.
+eol_full=$(git -C "${WT}" diff --cached --numstat | awk '{a+=$1; d+=$2} END {print a+0"/"d+0}')
+eol_norm=$(git -C "${WT}" diff --cached --ignore-cr-at-eol --numstat | awk '{a+=$1; d+=$2} END {print a+0"/"d+0}')
+[[ "${eol_full}" != "${eol_norm}" ]] && \
+    echo "  note: staged diff is ${eol_full} raw vs ${eol_norm} ignoring CR (upstream blobs carry their own endings)"
+# Without a resolvable upstream ref the realignment did not run, so nothing
+# guarantees the endings of the <core>.sv files this script rewrites. A
+# whole-file flip there would mean the marker strip mangled them, which is a
+# defect in this script and must stop the run.
+if (( ! realigned )); then
+    for sv in "${core_svs[@]}"; do
+        [[ -z "${sv}" ]] && continue
+        sv_full=$(git -C "${WT}" diff --cached --numstat -- "${sv}" | awk '{print $1"/"$2}')
+        sv_norm=$(git -C "${WT}" diff --cached --ignore-cr-at-eol --numstat -- "${sv}" | awk '{print $1"/"$2}')
+        if [[ "${sv_full}" != "${sv_norm}" ]]; then
+            echo "RESULT needs-manual: ${sv} line endings were rewritten (${sv_full} raw vs ${sv_norm:-0/0} ignoring CR)."
+            echo "  Inspect with: git -C ${WT} diff --cached --stat -- ${sv}"
+            exit 1
+        fi
+    done
+fi
+
+# Step 4-ter: what the hunk-level keep-ours DROPPED. Keeping our side of a
+# conflict hunk also throws away any upstream line that happened to live inside
+# it, and that loss is silent: the file still compiles right up until the dropped
+# line was a declaration something else uses (PC88 kept a tri-state ADC_BUS
+# default upstream had deleted; Arduboy lost upstream's cart_download and
+# palette_download wires and failed synthesis with "object is not declared").
+# List upstream lines that appear nowhere in the resolved file so they can be
+# eyeballed. The fork's own deltas show up here too (the inline emu port list,
+# the DB9 USER_* wiring), so this is a review aid, not a gate.
+for core_sv in "${core_svs[@]}"; do
+    [[ -z "${core_sv}" ]] && continue
+    git -C "${WT}" cat-file -e "${UPSTREAM_REF}:${core_sv}" 2>/dev/null || continue
+    missing=$(comm -23 \
+        <(git -C "${WT}" show "${UPSTREAM_REF}:${core_sv}" | tr -d '\r' | sed 's/[[:space:]]*$//' | grep -vE '^[[:space:]]*$' | sort -u) \
+        <(tr -d '\r' < "${WT}/${core_sv}" | sed 's/[[:space:]]*$//' | grep -vE '^[[:space:]]*$' | sort -u))
+    if [[ -n "${missing}" ]]; then
+        echo "== upstream lines absent from ${core_sv} ($(echo "${missing}" | wc -l) total, first 25) =="
+        echo "${missing}" | head -25 | sed 's/^/  | /'
+        echo "  (expected: the emu port list rows and the USER_* DB9 wiring. Anything else was dropped by the keep-ours resolution and probably needs to come back.)"
+    fi
+done
+
+# Step 5— name-keyed emu port diff: emu_ports.vh (upstream) vs the inline list in
 # <core>.sv, so the maintainer can apply every NON-DB9 delta by hand. Expected
 # fleet-wide delta: HPS_BUS [48:0]->[45:0]. USER_IN/USER_OUT/USER_OSD/USER_PP rows
 # are intentional DB9 extensions — KEEP those, do NOT narrow them to match upstream.
