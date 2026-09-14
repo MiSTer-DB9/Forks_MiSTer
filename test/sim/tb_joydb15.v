@@ -4,15 +4,15 @@
 // from the canonical path; never copied/edited). This file is fork-only test
 // infra under a downstream-only repo -> no MiSTer-DB9 markers.
 //
-// Strategy: joy_db15 samples JOY_DATA at its internal joy_count phase
-// (joydb15.v:34-59). We model a perfectly-synchronised DB15 splitter as a
-// white-box function of the DUT's own joy_count: at every instant JOY_DATA
-// carries the active-low line for whatever button slot the DUT is about to
-// store. A real 4021-style splitter that tracks JOY_CLK/JOY_LOAD presents
-// exactly this; driving it off joy_count removes clock-phase guesswork so the
-// assertions test the BIT MAP + inversion logic, which is the regression
-// target. Output is active-high after the `~joy` invert at joydb15.v:62, so a
-// pressed button => joystick bit 1 => stored joy bit 0 => JOY_DATA = 0.
+// Strategy: model the DB15 splitter as the 4021/74HC165 shift chain it is,
+// driven only by the DUT's external pins. JOY_LOAD low = parallel load (the
+// first slot, joy_count 2, sits on the serial output); each posedge JOY_CLK
+// with JOY_LOAD high shifts to the next slot. The new bit appears on JOY_DATA
+// TPD ns after the CLK edge (74HC165 tpd CP->Q is ~15-30 ns at 4.5 V). The
+// decoder must therefore sample at the CLK edge, not after it: run_tier1.sh
+// runs this TB with TPD=15 and TPD=40, both must pass. Output is active-high
+// after the `~joy` invert, so a pressed button => joystick bit 1 => stored joy
+// bit 0 => JOY_DATA = 0.
 //
 // joystick[15:0] layout (per joydb15.v:35-58, "----LS FEDCBAUDLR"):
 //   [0]R [1]L [2]Dn [3]Up [4]A [5]B [6]C [7]D [8]E [9]F [10]Start [11]Select
@@ -22,6 +22,8 @@
 `default_nettype none
 
 module tb_joydb15;
+
+  parameter TPD = 15;     // splitter CLK->DATA propagation delay, ns
 
   reg         clk = 1'b0;
   wire        JOY_CLK, JOY_LOAD;
@@ -41,7 +43,8 @@ module tb_joydb15;
   // fires). Seed it once to model FPGA power-on. White-box, sim-only.
   initial dut.JCLOCKS = 16'h0000;
 
-  // White-box splitter model: map DUT joy_count -> stimulus bit, active-low.
+  // Splitter slot -> stimulus bit, active-low. Slot numbering = the DUT's
+  // joy_count for that bit (joydb15.v case labels).
   function automatic bit_for_count;
     input [4:0] cnt;
     reg b;
@@ -77,7 +80,11 @@ module tb_joydb15;
     end
   endfunction
 
-  wire JOY_DATA = bit_for_count(dut.joy_count);
+  // Edge-driven splitter: shift chain position advances on posedge JOY_CLK,
+  // parallel load (JOY_LOAD low) parks it on the first slot.
+  reg [4:0] mcnt = 5'd0;
+  always @(posedge JOY_CLK) mcnt <= #TPD (JOY_LOAD ? mcnt + 5'd1 : 5'd2);
+  wire JOY_DATA = bit_for_count(mcnt);
 
   joy_db15 dut (
     .clk       ( clk       ),

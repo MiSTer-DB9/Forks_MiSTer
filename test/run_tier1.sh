@@ -42,15 +42,19 @@ lint_dialect() {
 lint_dialect '*.v'  -g2005 v2005
 lint_dialect '*.sv' -g2012 sv2012
 
-echo "== Tier 1: tb_joydb15 (DB15 decoder, v2005) =="
-if iverilog -g2005 -o "$WORK/tb15.vvp" -s tb_joydb15 \
+# Run twice: fast splitter (TPD=15 ns, catches sampling one clk after the CLK
+# edge) and slow splitter (TPD=40 ns, catches sampling before the shift).
+for tpd in 15 40; do
+echo "== Tier 1: tb_joydb15 (DB15 decoder, v2005, TPD=${tpd}ns) =="
+if iverilog -g2005 -P "tb_joydb15.TPD=${tpd}" -o "$WORK/tb15.vvp" -s tb_joydb15 \
      "$SIM/tb_joydb15.v" "$SYS/joydb15.v" >"$WORK/c15.log" 2>&1 \
    && vvp "$WORK/tb15.vvp" 2>&1 | tee "$WORK/r15.log" \
    && grep -q "TIER1 tb_joydb15: PASS" "$WORK/r15.log"; then
-  note "tb_joydb15 PASS"
+  note "tb_joydb15 TPD=${tpd} PASS"
 else
-  note "tb_joydb15 FAIL"; sed 's/^/    /' "$WORK/c15.log" 2>/dev/null || true; fail=1
+  note "tb_joydb15 TPD=${tpd} FAIL"; sed 's/^/    /' "$WORK/c15.log" 2>/dev/null || true; fail=1
 fi
+done
 
 echo "== Tier 1: tb_joydb_wrapper (joydb.sv, sv2012) =="
 if iverilog -g2012 -o "$WORK/tbw.vvp" -s tb_joydb_wrapper \

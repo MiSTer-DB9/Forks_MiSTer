@@ -31,34 +31,41 @@ assign JOY_CLK = JCLOCKS[3]; // 3Mhz, drives the splitter's external clock pin
 wire joy_tick = (JCLOCKS[3:0] == 4'b1000);
 assign JOY_LOAD = joy_renew;
 
+// Sample JOY_DATA on the clk edge that raises JOY_CLK (the old `posedge
+// JOY_CLK` instant), one clk before the tick body consumes it. The splitter's
+// 74HC165 shifts ~15-30 ns after that edge, so sampling inside the body
+// (20 ns @ 50 MHz) can read the NEXT slot's bit on a fast splitter.
+reg JOY_DATA_q;
+always @(posedge clk) JOY_DATA_q <= JOY_DATA;
+
 always @(posedge clk) if (joy_tick) begin
     joy_renew <= (joy_count != 5'd0);
     joy_count <= (joy_count == 5'd25) ? 5'd0 : (joy_count + 5'd1);
     case (joy_count)
-        5'd2  : joy1[7]  <= JOY_DATA;  // P1 D
-        5'd3  : joy1[6]  <= JOY_DATA;  // P1 C
-        5'd4  : joy1[5]  <= JOY_DATA;  // P1 B
-        5'd5  : joy1[4]  <= JOY_DATA;  // P1 A
-        5'd6  : joy1[0]  <= JOY_DATA;  // P1 Right
-        5'd7  : joy1[1]  <= JOY_DATA;  // P1 Left
-        5'd8  : joy1[2]  <= JOY_DATA;  // P1 Down
-        5'd9  : joy1[3]  <= JOY_DATA;  // P1 Up
-        5'd10 : joy2[0]  <= JOY_DATA;  // P2 Right
-        5'd11 : joy2[1]  <= JOY_DATA;  // P2 Left
-        5'd12 : joy2[2]  <= JOY_DATA;  // P2 Down
-        5'd13 : joy2[3]  <= JOY_DATA;  // P2 Up
-        5'd14 : joy1[9]  <= JOY_DATA;  // P1 F
-        5'd15 : joy1[8]  <= JOY_DATA;  // P1 E
-        5'd16 : joy1[11] <= JOY_DATA;  // P1 Select
-        5'd17 : joy1[10] <= JOY_DATA;  // P1 Start
-        5'd18 : joy2[9]  <= JOY_DATA;  // P2 F
-        5'd19 : joy2[8]  <= JOY_DATA;  // P2 E
-        5'd20 : joy2[11] <= JOY_DATA;  // P2 Select
-        5'd21 : joy2[10] <= JOY_DATA;  // P2 Start
-        5'd22 : joy2[7]  <= JOY_DATA;  // P2 D
-        5'd23 : joy2[6]  <= JOY_DATA;  // P2 C
-        5'd24 : joy2[5]  <= JOY_DATA;  // P2 B
-        5'd25 : joy2[4]  <= JOY_DATA;  // P2 A
+        5'd2  : joy1[7]  <= JOY_DATA_q;  // P1 D
+        5'd3  : joy1[6]  <= JOY_DATA_q;  // P1 C
+        5'd4  : joy1[5]  <= JOY_DATA_q;  // P1 B
+        5'd5  : joy1[4]  <= JOY_DATA_q;  // P1 A
+        5'd6  : joy1[0]  <= JOY_DATA_q;  // P1 Right
+        5'd7  : joy1[1]  <= JOY_DATA_q;  // P1 Left
+        5'd8  : joy1[2]  <= JOY_DATA_q;  // P1 Down
+        5'd9  : joy1[3]  <= JOY_DATA_q;  // P1 Up
+        5'd10 : joy2[0]  <= JOY_DATA_q;  // P2 Right
+        5'd11 : joy2[1]  <= JOY_DATA_q;  // P2 Left
+        5'd12 : joy2[2]  <= JOY_DATA_q;  // P2 Down
+        5'd13 : joy2[3]  <= JOY_DATA_q;  // P2 Up
+        5'd14 : joy1[9]  <= JOY_DATA_q;  // P1 F
+        5'd15 : joy1[8]  <= JOY_DATA_q;  // P1 E
+        5'd16 : joy1[11] <= JOY_DATA_q;  // P1 Select
+        5'd17 : joy1[10] <= JOY_DATA_q;  // P1 Start
+        5'd18 : joy2[9]  <= JOY_DATA_q;  // P2 F
+        5'd19 : joy2[8]  <= JOY_DATA_q;  // P2 E
+        5'd20 : joy2[11] <= JOY_DATA_q;  // P2 Select
+        5'd21 : joy2[10] <= JOY_DATA_q;  // P2 Start
+        5'd22 : joy2[7]  <= JOY_DATA_q;  // P2 D
+        5'd23 : joy2[6]  <= JOY_DATA_q;  // P2 C
+        5'd24 : joy2[5]  <= JOY_DATA_q;  // P2 B
+        5'd25 : joy2[4]  <= JOY_DATA_q;  // P2 A
     endcase
 end
 //----LS FEDCBAUDLR
