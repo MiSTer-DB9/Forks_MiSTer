@@ -116,6 +116,15 @@ for f in "${UNMERGED[@]}"; do
             say "  ABORT: $f present upstream but absent from $UNS (stale unstable) — resolve by hand"; git merge --abort 2>/dev/null; cleanup; exit 1
         fi
         git rm -q "$f" 2>/dev/null && removed=$((removed+1)) || { say "  ABORT: cannot resolve $f"; git merge --abort 2>/dev/null; cleanup; exit 1; }
+    else
+        # Still conflicted although unstable has the file: the DIFFS loop skipped
+        # it because the release commit and unstable agree on its content, so it
+        # never showed up as a difference. That is what an add/add conflict looks
+        # like when the merge base predates the file (C64's base is from 2019, so
+        # most of rtl/ conflicts this way). Unstable is the combine we trust, so
+        # take its copy here too.
+        git checkout "$UNS" -- "$f" && git add "$f" && adopted=$((adopted+1)) \
+            || { say "  ABORT: failed to adopt conflicted $f from $UNS"; git merge --abort 2>/dev/null; cleanup; exit 1; }
     fi
 done
 say "adopted=$adopted skipped_drift=$skipped_drift removed=$removed"

@@ -54,6 +54,34 @@ if [[ -n "$(git -C "${WT}" status --porcelain)" ]]; then
     echo >&2 "refusing: worktree ${WT} is dirty — commit/stash/clean first"; exit 2
 fi
 
+# Report upstream lines that survive nowhere in the merged emu wrappers.
+#
+# Two ways they go missing. A hunk-level keep-ours drops upstream lines that
+# happened to sit inside a conflict hunk (PC88 kept a tri-state ADC_BUS default
+# upstream had deleted; Arduboy lost two wire declarations and failed synthesis).
+# And rerere can replay a STALE recorded resolution, which reports as a clean
+# merge while quietly reinstating pre-feature text (Arcade-Cave lost upstream's
+# whole save-state declaration block that way). So this runs on BOTH paths.
+#
+# Comparison ignores indentation and trailing space, since the fork reindents
+# freely. The fork's own deltas still show up (the inline emu port list, the DB9
+# USER_* wiring), so it is a review aid, not a gate.
+report_dropped_upstream_lines() {
+    local sv n missing
+    while IFS= read -r sv; do
+        [[ -z "${sv}" ]] && continue
+        git -C "${WT}" cat-file -e "${UPSTREAM_REF}:${sv}" 2>/dev/null || continue
+        missing=$(comm -23 \
+            <(git -C "${WT}" show "${UPSTREAM_REF}:${sv}" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -vE '^$' | sort -u) \
+            <(tr -d '\r' < "${WT}/${sv}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -vE '^$' | sort -u))
+        [[ -z "${missing}" ]] && continue
+        n=$(echo "${missing}" | wc -l)
+        echo "== upstream lines absent from ${sv} (${n} total, first 25) =="
+        echo "${missing}" | head -25 | sed 's/^/  | /'
+        echo "  (expected: the emu port list rows and the USER_* DB9 wiring. Anything else was dropped and probably needs to come back.)"
+    done < <(cd "${WT}" && grep -rlE '^[[:space:]]*module[[:space:]]+emu\b' --include='*.sv' . 2>/dev/null | sed 's|^\./||' | grep -vE '^sys/' | sort)
+}
+
 echo "== ${WT} (${branch}) : merging ${UPSTREAM_REF} =="
 git -C "${WT}" fetch --no-tags origin >/dev/null 2>&1 || true
 # upstream remote lives in the canonical clone shared by this worktree.
@@ -61,6 +89,7 @@ git -C "${WT}" fetch --no-tags upstream >/dev/null 2>&1 || true
 
 if git -C "${WT}" merge -Xignore-all-space --no-ff "${UPSTREAM_REF}" \
         -m "BOT: Merging upstream ${UPSTREAM_REF} (Update sys. resolution)" >/dev/null 2>&1; then
+    report_dropped_upstream_lines
     echo "RESULT clean-merge: no conflict (nothing to resolve) — review + build + push."
     exit 0
 fi
@@ -71,7 +100,15 @@ echo "conflicts: $(echo "${conflicts}" | tr '\n' ' ')"
 # Identify the conflicted <core>.sv files (top-level emu wrappers, NOT sys/*).
 # Multi-revision repos (e.g. Atari800 = Atari5200.sv + Atari800.sv) conflict in
 # more than one — handle every one.
-mapfile -t core_svs < <(echo "${conflicts}" | grep -E '\.sv$' | grep -vE '^sys/' || true)
+# The `module emu` test matters: a repo-root .sv is not automatically an emu
+# wrapper (C64 conflicts in rtl/sid/*.sv and rtl/drv_overlay.sv), and running the
+# keep-ours strip on an ordinary source file throws away upstream's rewrite of it.
+# Anything else conflicted falls through to the manual bucket below.
+mapfile -t core_svs < <(
+    echo "${conflicts}" | grep -E '\.sv$' | grep -vE '^sys/' | while IFS= read -r f; do
+        [[ -f "${WT}/${f}" ]] && grep -qE '^[[:space:]]*module[[:space:]]+emu\b' "${WT}/${f}" && echo "${f}"
+    done
+)
 
 # Step 2a — resolve every conflicted <core>.sv by stripping conflict markers and
 # keeping OUR side of each conflict hunk (the fork's inline DB9-extended emu port
@@ -265,27 +302,7 @@ if (( ! realigned )); then
     done
 fi
 
-# Step 4-ter: what the hunk-level keep-ours DROPPED. Keeping our side of a
-# conflict hunk also throws away any upstream line that happened to live inside
-# it, and that loss is silent: the file still compiles right up until the dropped
-# line was a declaration something else uses (PC88 kept a tri-state ADC_BUS
-# default upstream had deleted; Arduboy lost upstream's cart_download and
-# palette_download wires and failed synthesis with "object is not declared").
-# List upstream lines that appear nowhere in the resolved file so they can be
-# eyeballed. The fork's own deltas show up here too (the inline emu port list,
-# the DB9 USER_* wiring), so this is a review aid, not a gate.
-for core_sv in "${core_svs[@]}"; do
-    [[ -z "${core_sv}" ]] && continue
-    git -C "${WT}" cat-file -e "${UPSTREAM_REF}:${core_sv}" 2>/dev/null || continue
-    missing=$(comm -23 \
-        <(git -C "${WT}" show "${UPSTREAM_REF}:${core_sv}" | tr -d '\r' | sed 's/[[:space:]]*$//' | grep -vE '^[[:space:]]*$' | sort -u) \
-        <(tr -d '\r' < "${WT}/${core_sv}" | sed 's/[[:space:]]*$//' | grep -vE '^[[:space:]]*$' | sort -u))
-    if [[ -n "${missing}" ]]; then
-        echo "== upstream lines absent from ${core_sv} ($(echo "${missing}" | wc -l) total, first 25) =="
-        echo "${missing}" | head -25 | sed 's/^/  | /'
-        echo "  (expected: the emu port list rows and the USER_* DB9 wiring. Anything else was dropped by the keep-ours resolution and probably needs to come back.)"
-    fi
-done
+report_dropped_upstream_lines
 
 # Step 5— name-keyed emu port diff: emu_ports.vh (upstream) vs the inline list in
 # <core>.sv, so the maintainer can apply every NON-DB9 delta by hand. Expected
