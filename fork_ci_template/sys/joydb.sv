@@ -82,19 +82,27 @@ module joydb
     // Programmable per-core button-remap matrix (UIO 0xFD selector load from
     // Main_MiSTer db9_map.cpp). joydb_*_mapped are joydb_1/joydb_2 rewired
     // into MiSTer-standard order per the streamed table — drop-in for a
-    // core's joy0_USB merge point. Tie remap_cmd=0 to leave the matrix at its
-    // identity reset default. Additive: joydb_1/joydb_2 are unchanged so
-    // un-migrated cores keep their hardcoded permutation.
+    // core's joy0_USB merge point. Until a map is streamed the matrix uses the
+    // remap_default_* table below (all-zero = every button slot NONE).
+    // Additive: joydb_1/joydb_2 are unchanged so un-migrated cores keep their
+    // hardcoded permutation.
     //
     // The porter WRAPPER_BLOCK (port_core_full.py) binds these fleet-wide:
     // add_joydb_remap_bindings wires clk_sys/remap_*/joydb_*_mapped on the joydb
-    // instance and add_hps_io_remap_bindings emits the db9_remap_* outputs into
-    // each sys/hps_io.sv (both idempotent across re-ports). A core that predates
-    // the bindings ties remap_cmd low (matrix stays at identity, joydb_remap is
-    // pruned, *_mapped dangle) so the feature is simply absent until re-ported.
+    // instance, add_joydb_remap_defaults derives remap_default_* from the core's
+    // CONF_STR J1, and add_hps_io_remap_bindings emits the db9_remap_* outputs
+    // into each sys/hps_io.sv (all idempotent across re-ports). A core that
+    // predates the bindings ties remap_cmd low (every button slot NONE,
+    // joydb_remap is pruned, *_mapped dangle) so the feature is simply absent
+    // until re-ported.
     input  logic        remap_cmd,
     input  logic [5:0]  remap_byte_cnt,
     input  logic [15:0] remap_din,
+    // Per-core factory default per devtype, 9 x 4-bit selectors packed like the
+    // 0xFD stream (slot s at [(s-4)*4 +: 4]). Lets a stock Main_MiSTer, which
+    // never sends 0xFD, play with the derived layout. Unbound = all-NONE.
+    input  logic [35:0] remap_default_db15,
+    input  logic [35:0] remap_default_db9md,
     output logic [15:0] joydb_1_mapped,
     output logic [15:0] joydb_2_mapped,
 
@@ -425,6 +433,9 @@ joydb_remap joydb_remap_i (
     .remap_cmd      ( remap_cmd      ),
     .remap_byte_cnt ( remap_byte_cnt ),
     .remap_din      ( remap_din      ),
+    .joy_db15_en    ( joy_db15_en    ),
+    .remap_default_db15  ( remap_default_db15  ),
+    .remap_default_db9md ( remap_default_db9md ),
     .joydb_1        ( joydb_1        ),
     .joydb_2        ( joydb_2        ),
     .joydb_1_mapped ( joydb_1_mapped ),

@@ -23,6 +23,10 @@ module tb_joydb_wrapper;
   logic [15:0] joydb_1, joydb_2;
   logic        joydb_1ena, joydb_2ena;
   logic [15:0] joy_raw;
+  logic        remap_cmd = 1'b0;
+  logic [5:0]  remap_byte_cnt = 6'd0;
+  logic [15:0] remap_din = 16'h0000;
+  logic [15:0] joydb_1_mapped;
 
   logic [11:0] p1 = 12'h000, p2 = 12'h000;
   integer errors = 0;
@@ -69,8 +73,23 @@ module tb_joydb_wrapper;
     .joydb_2         ( joydb_2        ),
     .joydb_1ena      ( joydb_1ena     ),
     .joydb_2ena      ( joydb_2ena     ),
+    .clk_sys         ( clk            ),
+    .remap_cmd       ( remap_cmd      ),
+    .remap_byte_cnt  ( remap_byte_cnt ),
+    .remap_din       ( remap_din      ),
+    // NeoGeo J1,A,B,C,D,Start,Select,Coin,ABC,A+B,C+D derived tables
+    // (porting/derive_preview.py --core NeoGeo --devtype DB15 / DB9MD).
+    .remap_default_db15  ( 36'h98FBA7654 ),
+    .remap_default_db9md ( 36'h98BFA7654 ),
+    .joydb_1_mapped  ( joydb_1_mapped ),
     .joy_raw         ( joy_raw        )
   );
+
+  // One 0xFD word, as hps_io presents it (remap_cmd held, byte_cnt = word index).
+  task automatic remap_word(input logic [5:0] idx, input logic [15:0] w);
+    @(negedge clk); remap_cmd = 1'b1; remap_byte_cnt = idx; remap_din = w;
+    @(negedge clk); remap_cmd = 1'b0;
+  endtask
 
   task automatic chk(input string n, input logic [31:0] got, input logic [31:0] exp);
     if (got !== exp) begin
@@ -118,6 +137,21 @@ module tb_joydb_wrapper;
     p1 = 12'h400;          // only Start
     #200000;
     chk("osd not-combo",   USER_OSD,          1'b0);
+
+    // ---- Remap factory default: no 0xFD stream yet, DB15 table drives the
+    //      mux. raw Start(10) -> slot 8 (Start), raw E(8) -> slot 11 (ABC).
+    joy_type = 2'd3; joy_2p = 1'b0; p1 = 12'h500; p2 = 12'h000;
+    #200000;
+    chk("default joydb_1",      joydb_1,        {4'b0, 12'h500});
+    chk("default db15 mapped",  joydb_1_mapped, 16'h0900);
+
+    // ---- Streamed table overrides the default: slot 4 <- raw Start, rest NONE ----
+    remap_word(6'd1, 16'hFFFA);
+    remap_word(6'd2, 16'hFFFF);
+    remap_word(6'd3, 16'h000F);
+    p1 = 12'h400;
+    #200000;
+    chk("streamed mapped",      joydb_1_mapped, 16'h0010);
 
     // ============================================================
     // ---- Probe-mode (OSD-open autodetect) FSM coverage ----

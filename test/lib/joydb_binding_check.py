@@ -63,7 +63,11 @@ _CONN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*\(")
 # unconnected (commit a79778f). Unlike an unbound INPUT (controller path goes
 # silently dead), an unconnected OUTPUT is harmless in Verilog, so it must not
 # FATAL the binding completeness guard.
-OPTIONAL_PORTS = {"pad_1_6btn", "pad_2_6btn"}
+# remap_default_db15/db9md are INPUTS but safe unbound: all-zero means "no
+# factory default" (every button slot NONE until Main_MiSTer streams 0xFD, the
+# pre-default behaviour). Advisory until the fleet is re-ported with them.
+OPTIONAL_PORTS = {"pad_1_6btn", "pad_2_6btn",
+                  "remap_default_db15", "remap_default_db9md"}
 
 
 def required_ports(core_dir=None):

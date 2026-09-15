@@ -48,6 +48,18 @@ module joydb_remap
     input  logic [5:0]  remap_byte_cnt,
     input  logic [15:0] remap_din,
 
+    // Per-core factory default, used until the first 0xFD stream lands. The
+    // porter derives both tables from the core's CONF_STR J1 with the same rule
+    // db9_map.cpp uses, so a stock (non-fork) Main_MiSTer, which never sends
+    // 0xFD, still gets the intended layout. One table per devtype because the
+    // raw sources differ (DB15 D/E/F/Select vs DB9MD X/Y/Z/Mode); Saturn is
+    // key-locked on a stock binary, so it needs none. An all-zero table (port
+    // left unbound on a core not yet re-ported) means "no default": every
+    // button slot reads NONE until the stream arrives, as before.
+    input  logic        joy_db15_en,
+    input  logic [35:0] remap_default_db15,
+    input  logic [35:0] remap_default_db9md,
+
     // Raw physical-order joystick words in (already Saturn-gated upstream).
     input  logic [15:0] joydb_1,
     input  logic [15:0] joydb_2,
@@ -62,24 +74,37 @@ module joydb_remap
     //   0..13 select raw[value]; 14 = Start&B combo (Saturn Select when the core
     //   uses R as R); 15 = NONE (constant 0).
     //
-    // Reset default = every selector 4'd15 (DB9_MAP_NONE) so each button output
-    // reads 0 until Main_MiSTer streams the real per-devtype map on core load --
-    // no spurious raw bit (e.g. Saturn raw[12]=L) leaks onto a button slot in
-    // the pre-stream window. D-pad is hardwired, so it is live immediately,
-    // which is correct: U/D/L/R map straight through on every devtype, and the
-    // mapped word is only consumed when joydb_*ena is set.
+    // Until Main_MiSTer streams a map (sel_loaded=0) the per-core factory
+    // default drives the mux, so the layout matches what the fork binary would
+    // stream and a stock binary (no 0xFD ever) still plays. A core that binds no
+    // default (all-zero) falls back to every selector 4'd15 (DB9_MAP_NONE):
+    // each button output reads 0, no spurious raw bit (e.g. Saturn raw[12]=L)
+    // leaks onto a button slot. sel itself also resets to all-NONE so a partly
+    // streamed table never exposes stale nibbles. D-pad is hardwired, so it is
+    // live immediately, which is correct: U/D/L/R map straight through on every
+    // devtype, and the mapped word is only consumed when joydb_*ena is set.
     localparam [5:0] WORD_FIRST = 6'd1;
     localparam [5:0] WORD_LAST  = 6'd3;
 
     // 3 x 16-bit words = 48 bits; only the low 36 are used (9 x 4). The upper 12
     // are written but never read -> pruned by synthesis.
     reg [47:0] sel;
+    reg        sel_loaded = 1'b0;
     initial sel = {48{1'b1}};   // all selectors = 4'b1111 = 15 (NONE) -> outputs 0
 
     always @(posedge clk_sys) begin
-        if (remap_cmd && remap_byte_cnt >= WORD_FIRST && remap_byte_cnt <= WORD_LAST)
+        if (remap_cmd && remap_byte_cnt >= WORD_FIRST && remap_byte_cnt <= WORD_LAST) begin
             sel[(remap_byte_cnt - WORD_FIRST) * 16 +: 16] <= remap_din;
+            sel_loaded <= 1'b1;
+        end
     end
+
+    // Effective table: streamed map once loaded, else the per-devtype factory
+    // default, else all-NONE. Still a config register + combinational mux.
+    wire [35:0] sel_default = joy_db15_en ? remap_default_db15 : remap_default_db9md;
+    wire [35:0] sel_eff     = sel_loaded      ? sel[35:0]
+                            : (|sel_default) ? sel_default
+                            :                  {36{1'b1}};
 
     // Source-bit lookup vector: index 0..13 = raw bits, 14 = Start&B combo,
     // 15 = 0 (NONE). Synthesis prunes the constant entry.
@@ -107,8 +132,8 @@ module joydb_remap
     genvar i;
     generate
         for (i = 4; i <= 12; i = i + 1) begin : g_slot
-            assign joydb_1_mapped[i] = src_1[ sel[(i-4)*4 +: 4] ];
-            assign joydb_2_mapped[i] = src_2[ sel[(i-4)*4 +: 4] ];
+            assign joydb_1_mapped[i] = src_1[ sel_eff[(i-4)*4 +: 4] ];
+            assign joydb_2_mapped[i] = src_2[ sel_eff[(i-4)*4 +: 4] ];
         end
     endgenerate
 

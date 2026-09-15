@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _eol_io import read_text, write_text  # noqa: E402
+import derive_preview  # noqa: E402  (db9_map.cpp factory-default model)
 
 
 def find_emu_sv(core_dir: Path) -> Path | None:
@@ -1036,6 +1037,85 @@ def add_joydb_remap_bindings(text: str) -> tuple[str, bool]:
     return text[:m.start('body')] + new_body + text[m.end('body'):], True
 
 
+# ---- FPGA-side remap factory default (stock Main_MiSTer support) ----
+#
+# joydb_remap.sv resets to all-NONE and only Main_MiSTer's 0xFD stream loads a
+# table. A stock (non-fork) MiSTer binary never sends 0xFD, so on a Layer-B core
+# every DB15/DB9MD button read 0 forever (Issue #51, NeoGeo). The porter now
+# derives the same per-devtype tables db9_map.cpp would stream and binds them to
+# joydb's remap_default_* ports; the matrix uses them until a stream arrives, so
+# stock and fork binaries agree on the out-of-the-box layout. Regenerated on
+# every re-port so a CONF_STR J1 change moves the default with it.
+
+REMAP_DEFAULTS_BLOCK_RE = re.compile(
+    r'^[ \t]*// \[MiSTer-DB9 BEGIN\] - DB9 remap factory default[^\n]*\n'
+    r'.*?^[ \t]*// \[MiSTer-DB9 END\][ \t]*\n',
+    flags=re.MULTILINE | re.DOTALL,
+)
+
+
+def remap_defaults_block(text: str, indent: str) -> str:
+    hit = derive_preview.J1_RE.search(text)
+    labels = None
+    if hit:
+        body = hit.group(1).split(',', 1)
+        if len(body) == 2:
+            labels = body[1].rstrip(';').split(',')
+    lines = [
+        f"{indent}// [MiSTer-DB9 BEGIN] - DB9 remap factory default (used until Main_MiSTer streams UIO 0xFD)\n",
+        f"{indent}// Derived from CONF_STR J1, same rule as db9_map.cpp; lets the core work on a stock MiSTer binary.\n",
+    ]
+    vals = {}
+    for devtype in ('DB15', 'DB9MD'):
+        m = derive_preview.derive(labels, devtype) if labels else None
+        if m is None:
+            m = derive_preview.hardcoded_default(devtype)
+            desc = 'no J1 button list, generic table (db9_map_hardcoded_default)'
+        else:
+            desc = derive_preview.show(labels, m, devtype)
+        lines.append(f"{indent}// {devtype + ':':<6} {desc}\n")
+        vals[devtype] = derive_preview.pack36(m)
+    lines += [
+        f"{indent}wire  [35:0] db9_remap_default_db15  = 36'h{vals['DB15']:09X};\n",
+        f"{indent}wire  [35:0] db9_remap_default_db9md = 36'h{vals['DB9MD']:09X};\n",
+        f"{indent}// [MiSTer-DB9 END]\n",
+    ]
+    return ''.join(lines)
+
+
+def add_joydb_remap_defaults(text: str) -> tuple[str, bool]:
+    """Emit (or refresh) the marked db9_remap_default_* block just before the
+    joydb instance and bind both ports after .remap_din. Idempotent: the block
+    is rewritten only when the derived values/comments changed."""
+    m = JOYDB_INSTANCE_BODY_RE.search(text)
+    if not m or '.remap_din' not in m.group('body'):
+        return text, False
+    indent = re.match(r'[ \t]*', m.group('head')).group(0)
+    block = remap_defaults_block(text, indent)
+    changed = False
+    old = REMAP_DEFAULTS_BLOCK_RE.search(text)
+    if old:
+        if old.group(0) != block:
+            text = text[:old.start()] + block + text[old.end():]
+            changed = True
+    else:
+        text = text[:m.start()] + block + text[m.start():]
+        changed = True
+    m = JOYDB_INSTANCE_BODY_RE.search(text)
+    body = m.group('body')
+    if '.remap_default_db15' not in body:
+        din_m = re.search(r'^(?P<indent>[ \t]*)\.remap_din\b[^\n]*\n', body, flags=re.MULTILINE)
+        bi = din_m.group('indent')
+        binds = (
+            f"{bi}.remap_default_db15  ( db9_remap_default_db15  ),\n"
+            f"{bi}.remap_default_db9md ( db9_remap_default_db9md ),\n"
+        )
+        body = body[:din_m.end()] + binds + body[din_m.end():]
+        text = text[:m.start('body')] + body + text[m.end('body'):]
+        changed = True
+    return text, changed
+
+
 # Migrated `.joy_raw(OSD_STATUS ? joy_raw_payload ...)` binding anchor on the
 # core's hps_io instance. The db9_remap_* bindings sit right after it, inside
 # the same always-free DB9 block (matches the SNES reference wiring).
@@ -1413,6 +1493,9 @@ def port_core(core_dir: Path) -> list[str]:
     text, ok = add_joydb_remap_bindings(text)
     if ok:
         notes.append(f'{sv.name}: added matrix bindings (.clk_sys/.remap_*/.joydb_*_mapped) to joydb instance')
+    text, ok = add_joydb_remap_defaults(text)
+    if ok:
+        notes.append(f'{sv.name}: derived db9_remap_default_* (DB15/DB9MD factory tables from J1) + bound to joydb instance')
     text, ok = add_hps_io_remap_bindings(text)
     if ok:
         notes.append(f'{sv.name}: added .db9_remap_* selector-stream bindings to hps_io instance')
