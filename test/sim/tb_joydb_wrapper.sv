@@ -146,7 +146,10 @@ module tb_joydb_wrapper;
     chk("default db15 mapped",  joydb_1_mapped, 16'h0900);
 
     // ---- Streamed table overrides the default: slot 4 <- raw Start, rest NONE ----
+    // A partly streamed table must not reach the mux (default stays live).
     remap_word(6'd1, 16'hFFFA);
+    #200000;
+    chk("partial stream mapped", joydb_1_mapped, 16'h0900);
     remap_word(6'd2, 16'hFFFF);
     remap_word(6'd3, 16'h000F);
     p1 = 12'h400;

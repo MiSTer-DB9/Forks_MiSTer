@@ -158,6 +158,17 @@ else
   note "joydb_remap_consistency_check selftest FAIL"; sed 's/^/    /' "$WORK/rr.log"; fail=1
 fi
 
+# The porter bakes each core's FPGA factory-default remap table from this model
+# (port_core_full.py imports it), so a drift from Main_MiSTer/db9_map.cpp silently
+# moves the out-of-the-box button layout of every core on the next re-port.
+echo "== Tier 1: derive_preview self-test (db9_map.cpp model, no iverilog) =="
+if python3 "$HERE/../porting/derive_preview.py" --self-test >"$WORK/dp.log" 2>&1 \
+   && grep -q "self-test OK" "$WORK/dp.log"; then
+  note "derive_preview self-test PASS"
+else
+  note "derive_preview self-test FAIL"; sed 's/^/    /' "$WORK/dp.log"; fail=1
+fi
+
 echo "== Tier 1: forks_ini_check selftest (fixtures, no iverilog) =="
 if python3 "$HERE/lib/test_forks_ini_check.py" >"$WORK/fi.log" 2>&1 \
    && grep -q "FORKSINI selftest: PASS" "$WORK/fi.log"; then

@@ -434,8 +434,13 @@ joydb_remap joydb_remap_i (
     .remap_byte_cnt ( remap_byte_cnt ),
     .remap_din      ( remap_din      ),
     .joy_db15_en    ( joy_db15_en    ),
-    .remap_default_db15  ( remap_default_db15  ),
-    .remap_default_db9md ( remap_default_db9md ),
+    // Each factory-default table is gated to the devtype it was derived for, so
+    // a Saturn (or Off) selection falls through to all-NONE instead of
+    // borrowing the DB9MD table -- the same raw bit means a different button on
+    // a Saturn pad (raw11 = R trigger, not Mode), which is exactly the spurious
+    // -bit leak the pre-stream window is supposed to avoid.
+    .remap_default_db15  ( joy_db15_en  ? remap_default_db15  : 36'd0 ),
+    .remap_default_db9md ( joy_db9md_en ? remap_default_db9md : 36'd0 ),
     .joydb_1        ( joydb_1        ),
     .joydb_2        ( joydb_2        ),
     .joydb_1_mapped ( joydb_1_mapped ),

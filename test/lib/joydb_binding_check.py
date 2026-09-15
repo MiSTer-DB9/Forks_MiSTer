@@ -17,10 +17,15 @@
 # non-ported / pristine upstream) is n/a -- there is no "legitimately
 # missing port" case (unlike satgate's InputTest 1'b1 tie), so this GATES.
 #
-# EXCEPTION -- OPTIONAL_PORTS (below): a few canonical ports are ADVISORY
-# OUTPUTS the WRAPPER_BLOCK deliberately does NOT emit (commit a79778f). An
-# unconnected output is harmless in Verilog (no silently-dead path), so a
-# core leaving one unbound is not a defect and must not FATAL here.
+# EXCEPTION -- OPTIONAL_PORTS (below): a few canonical ports are excused. Two
+# are ADVISORY OUTPUTS the WRAPPER_BLOCK deliberately does NOT emit (commit
+# a79778f) -- an unconnected output is harmless in Verilog (no silently-dead
+# path). Two are the remap_default_* INPUTS, excused only while the factory-
+# default re-port rolls out across the fleet; the PASS line names every core
+# still missing them, so the report doubles as the rollout tracker. Drop them
+# from the set once the fleet is re-ported, so a merge that strips the binding
+# FATALs again instead of silently reverting that core to dead buttons on a
+# stock MiSTer binary.
 #
 # Required-port set is parsed from the live canonical header, so it
 # auto-tracks if a port is ever added/removed there.
@@ -63,11 +68,14 @@ _CONN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*\(")
 # unconnected (commit a79778f). Unlike an unbound INPUT (controller path goes
 # silently dead), an unconnected OUTPUT is harmless in Verilog, so it must not
 # FATAL the binding completeness guard.
-# remap_default_db15/db9md are INPUTS but safe unbound: all-zero means "no
-# factory default" (every button slot NONE until Main_MiSTer streams 0xFD, the
-# pre-default behaviour). Advisory until the fleet is re-ported with them.
-OPTIONAL_PORTS = {"pad_1_6btn", "pad_2_6btn",
-                  "remap_default_db15", "remap_default_db9md"}
+OPTIONAL_OUTPUTS = {"pad_1_6btn", "pad_2_6btn"}
+# INPUTS excused only for the duration of the factory-default rollout. Quartus
+# grounds an unconnected input port, so all-zero reads as "no factory default"
+# (every button slot NONE until Main_MiSTer streams 0xFD) -- the pre-default
+# behaviour, not a dead path. Named in the PASS line below so the fleet audit
+# shows which cores still need the re-port. Remove once the fleet carries them.
+PENDING_INPUTS = {"remap_default_db15", "remap_default_db9md"}
+OPTIONAL_PORTS = OPTIONAL_OUTPUTS | PENDING_INPUTS
 
 
 def required_ports(core_dir=None):
@@ -166,8 +174,10 @@ def main(argv):
     # skipped advisory ports.
     opt_unbound = [p for p in req if p in OPTIONAL_PORTS and p not in bound]
     if opt_unbound:
+        kind = ("advisory/pending" if any(p in PENDING_INPUTS for p in opt_unbound)
+                else "advisory output")
         print(f"  joydb-bind: PASS  {len(req) - len(opt_unbound)} of "
-              f"{len(req)} canonical joydb ports bound; advisory output(s) "
+              f"{len(req)} canonical joydb ports bound; {kind} port(s) "
               f"left unbound (ok): {', '.join(opt_unbound)}  [{cb}]")
     else:
         print(f"  joydb-bind: PASS  all {len(req)} canonical joydb ports bound  "

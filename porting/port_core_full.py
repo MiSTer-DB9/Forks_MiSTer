@@ -1046,21 +1046,26 @@ def add_joydb_remap_bindings(text: str) -> tuple[str, bool]:
 # joydb's remap_default_* ports; the matrix uses them until a stream arrives, so
 # stock and fork binaries agree on the out-of-the-box layout. Regenerated on
 # every re-port so a CONF_STR J1 change moves the default with it.
+#
+# Arcade Template.sv cores are the one divergence: Main_MiSTer derives their
+# streamed table from the loaded game's MRA <buttons> (ovr_buttons), which the
+# FPGA cannot know, so the baked default comes from the core's CONF_STR J1 --
+# often absent, in which case the generic hardcoded table is used.
 
+# Bounded to the block's own contiguous comment / wire lines, NOT `.*?`: a
+# mangled or merge-dropped END marker would otherwise let the match run to the
+# next bare `// [MiSTer-DB9 END]` in the file (there are ~9 per ported core) and
+# the rewrite below would delete everything in between, joydb instance included.
 REMAP_DEFAULTS_BLOCK_RE = re.compile(
     r'^[ \t]*// \[MiSTer-DB9 BEGIN\] - DB9 remap factory default[^\n]*\n'
-    r'.*?^[ \t]*// \[MiSTer-DB9 END\][ \t]*\n',
-    flags=re.MULTILINE | re.DOTALL,
+    r'(?:^[ \t]*(?://|wire\b)[^\n]*\n)*?'
+    r'^[ \t]*// \[MiSTer-DB9 END\][ \t]*\n',
+    flags=re.MULTILINE,
 )
 
 
 def remap_defaults_block(text: str, indent: str) -> str:
-    hit = derive_preview.J1_RE.search(text)
-    labels = None
-    if hit:
-        body = hit.group(1).split(',', 1)
-        if len(body) == 2:
-            labels = body[1].rstrip(';').split(',')
+    labels = derive_preview.labels_from_j1(text)
     lines = [
         f"{indent}// [MiSTer-DB9 BEGIN] - DB9 remap factory default (used until Main_MiSTer streams UIO 0xFD)\n",
         f"{indent}// Derived from CONF_STR J1, same rule as db9_map.cpp; lets the core work on a stock MiSTer binary.\n",

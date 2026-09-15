@@ -53,9 +53,11 @@ module joydb_remap
     // db9_map.cpp uses, so a stock (non-fork) Main_MiSTer, which never sends
     // 0xFD, still gets the intended layout. One table per devtype because the
     // raw sources differ (DB15 D/E/F/Select vs DB9MD X/Y/Z/Mode); Saturn is
-    // key-locked on a stock binary, so it needs none. An all-zero table (port
-    // left unbound on a core not yet re-ported) means "no default": every
-    // button slot reads NONE until the stream arrives, as before.
+    // key-locked on a stock binary, so it needs none and joydb.sv zeroes both
+    // tables when the live devtype is neither DB15 nor DB9MD. An all-zero table
+    // (that zeroing, or a port left unbound on a core not yet re-ported) means
+    // "no default": every button slot reads NONE until the stream arrives, as
+    // before.
     input  logic        joy_db15_en,
     input  logic [35:0] remap_default_db15,
     input  logic [35:0] remap_default_db9md,
@@ -77,12 +79,13 @@ module joydb_remap
     // Until Main_MiSTer streams a map (sel_loaded=0) the per-core factory
     // default drives the mux, so the layout matches what the fork binary would
     // stream and a stock binary (no 0xFD ever) still plays. A core that binds no
-    // default (all-zero) falls back to every selector 4'd15 (DB9_MAP_NONE):
-    // each button output reads 0, no spurious raw bit (e.g. Saturn raw[12]=L)
-    // leaks onto a button slot. sel itself also resets to all-NONE so a partly
-    // streamed table never exposes stale nibbles. D-pad is hardwired, so it is
-    // live immediately, which is correct: U/D/L/R map straight through on every
-    // devtype, and the mapped word is only consumed when joydb_*ena is set.
+    // default for the live devtype (all-zero) falls back to every selector 4'd15
+    // (DB9_MAP_NONE): each button output reads 0, no spurious raw bit (e.g.
+    // Saturn raw[12]=L) leaks onto a button slot. sel_loaded flips on the LAST
+    // streamed word, so a partly streamed table never reaches the mux. D-pad is
+    // hardwired, so it is live immediately, which is correct: U/D/L/R map
+    // straight through on every devtype, and the mapped word is only consumed
+    // when joydb_*ena is set.
     localparam [5:0] WORD_FIRST = 6'd1;
     localparam [5:0] WORD_LAST  = 6'd3;
 
@@ -95,7 +98,10 @@ module joydb_remap
     always @(posedge clk_sys) begin
         if (remap_cmd && remap_byte_cnt >= WORD_FIRST && remap_byte_cnt <= WORD_LAST) begin
             sel[(remap_byte_cnt - WORD_FIRST) * 16 +: 16] <= remap_din;
-            sel_loaded <= 1'b1;
+            // Only the final word flips the table live. Latching on the first
+            // would splice the new word 1 onto the previous stream's words 2/3
+            // (or onto the all-NONE reset value) for the rest of the transfer.
+            if (remap_byte_cnt == WORD_LAST) sel_loaded <= 1'b1;
         end
     end
 

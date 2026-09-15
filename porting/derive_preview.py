@@ -41,8 +41,6 @@ def raw_names(devtype):
             COMBO_STARTB: "Start+B", NONE: "-"}
 
 
-RAW_NAME = raw_names("DB9MD")
-
 SECONDARY = {
     "pause", "test", "service", "service select", "service mode", "reset",
     "soft reset", "cheat", "advance", "auto up", "high score reset", "slam",
@@ -274,10 +272,28 @@ J1_RE = re.compile(r'"(J1?,[^"]*)"')
 MRA_RE = re.compile(r'<buttons[^>]*\bnames\s*=\s*"([^"]*)"', re.I)
 
 
+def labels_from_j1(text):
+    """CONF_STR J1 button labels, or None when the core declares no J1. Shared
+    by the fleet scan and by port_core_full.py's per-core factory-default
+    derive, so the two cannot drift apart."""
+    hit = J1_RE.search(text)
+    if not hit:
+        return None
+    body = hit.group(1).split(",", 1)
+    return body[1].rstrip(";").split(",") if len(body) == 2 else None
+
+
+_CORE_LABELS = None
+
+
 def core_labels():
     """(source, labels) for every Layer-B core: its J1, plus each in-repo MRA's
-    button names (arcade cores derive from ovr_buttons, not from J1)."""
-    out = []
+    button names (arcade cores derive from ovr_buttons, not from J1). Cached --
+    the self-test walks the fleet once per devtype."""
+    global _CORE_LABELS
+    if _CORE_LABELS is not None:
+        return _CORE_LABELS
+    out, scanned = [], set()
     for sv in sorted(glob.glob(os.path.join(REPO, "*_MiSTer*", "*.sv"))):
         try:
             text = open(sv, encoding="utf-8", errors="replace").read()
@@ -285,18 +301,21 @@ def core_labels():
             continue
         if "joydb_1_mapped[" not in text:
             continue
-        core = os.path.basename(os.path.dirname(sv))
-        hit = J1_RE.search(text)
-        if hit:
-            body = hit.group(1).split(",", 1)
-            if len(body) == 2:
-                out.append((core, body[1].rstrip(";").split(",")))
-        for mra in sorted(glob.glob(os.path.join(os.path.dirname(sv), "**", "*.mra"),
+        core_dir = os.path.dirname(sv)
+        core = os.path.basename(core_dir)
+        labels = labels_from_j1(text)
+        if labels:
+            out.append((core, labels))
+        if core_dir in scanned:
+            continue          # 2nd Layer-B .sv in this dir: its MRAs are listed
+        scanned.add(core_dir)
+        for mra in sorted(glob.glob(os.path.join(core_dir, "**", "*.mra"),
                                     recursive=True)):
             names = MRA_RE.search(open(mra, encoding="utf-8", errors="replace").read())
             if names:
                 out.append(("%s:%s" % (core, os.path.basename(mra)),
                             names.group(1).split(",")))
+    _CORE_LABELS = out
     return out
 
 
@@ -310,10 +329,11 @@ def cmd_fleet(devtype):
             continue
         if any(new[s] == NONE and old[s] != NONE for s in range(4, BTN_LAST + 1)):
             unmapped += 1
-            print("LOSS  %-44s %s" % (name, show(labels, new)))
+            print("LOSS  %-44s %s" % (name, show(labels, new, devtype)))
         if old != new:
             changed += 1
-            print("  %-44s\n      old: %s\n      new: %s" % (name, show(labels, old), show(labels, new)))
+            print("  %-44s\n      old: %s\n      new: %s"
+                  % (name, show(labels, old, devtype), show(labels, new, devtype)))
     print("\n%d sources scanned, %d changed, %d lost a mapping" % (total, changed, unmapped))
     return 1 if unmapped else 0
 
