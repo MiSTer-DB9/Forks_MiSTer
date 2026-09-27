@@ -35,8 +35,12 @@
 # quirks (stale unstable, layout changes, status-bit collisions) before PUSH=1.
 #
 # Does NOT handle:
-#   * stale unstable branch (built before the upstream change) -> adopts pre-change
-#     content; resolve such cores by hand (see Arcade-IremM72 in the merge log).
+#   * stale unstable branch (built before the upstream change) -> aborts when
+#     unstable does not contain the release commit; resolve such cores by hand.
+#     Adopting it would revert upstream's HDL to the canary's older state (this
+#     happened to Arcade-BlackWidow/Tutankham/Gaplus, whose unstable/* branches
+#     froze in June). A branch that contains CTM but carries a bad resolution of
+#     its own is still adopted as-is: review the diff against CTM.
 #   * status-bit collisions (upstream took the fork's joy_type bits) -> relocate
 #     joy_type/joy_2p + add a RESERVED directive by hand (see C128).
 #   * repo restructures (subdir->root) -> full re-port.
@@ -66,6 +70,8 @@ UH=$(git -C "$CLONE" rev-parse "upstream/$UB" 2>/dev/null)
 [[ -z "$UH" ]] && { say "could not resolve upstream/$UB HEAD"; exit 2; }   # drift guard depends on UH
 git -C "$CLONE" merge-base --is-ancestor "$CTM" "origin/$MB" 2>/dev/null && { say "already in $MB"; exit 2; }
 git -C "$CLONE" rev-parse --verify -q "$UNS" >/dev/null || _no_unstable
+git -C "$CLONE" merge-base --is-ancestor "$CTM" "$UNS" 2>/dev/null \
+    || { say "$UNS predates the release commit, resolve by hand"; exit 1; }
 
 cleanup; rm -rf "$WT"
 git -C "$CLONE" worktree add -q --detach "$WT" "origin/$MB" || { say "worktree fail"; exit 1; }
