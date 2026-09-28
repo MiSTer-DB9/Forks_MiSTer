@@ -199,6 +199,7 @@ def derive(labels, devtype="DB9MD", rule="new"):
             m[slot] = 11
             used |= 1 << 11
 
+
     def p_start(slot, n, cat):
         nonlocal used
         if cat == START and not used & (1 << 10):
@@ -240,6 +241,10 @@ def derive(labels, devtype="DB9MD", rule="new"):
     each(p_shoulder)
     each(p_gameplay)
     each(p_secondary)
+    # Coin with no home left shares raw11 with a Pass-1 exact Select/Mode (DB15
+    # "Select" on NeoGeo); mirrors sel_on_11 in db9_map.cpp.
+    if rule == "new" and any(m[p + 4] == 11 and category(n, rule) == SEL for p, n in real):
+        each(lambda s, n, c: m.__setitem__(s, 11) if c == COIN else None)
     return m
 
 
@@ -366,6 +371,13 @@ def cmd_self_test():
     one = j1("Fire,Start 1P,Start 2P,Coin,Pause")
     assert derive(one)[4] == 5, "a 1-button core's Fire must sit on B"
 
+    # NeoGeo on DB15: the exact "Select" owns raw11, Coin must share it (MVS
+    # original BIOS credits only from Coin). Pre-matrix perm fed Coin from raw11.
+    neogeo = j1("A,B,C,D,Start,Select,Coin,ABC,A+B,C+D")
+    m = derive(neogeo, "DB15")
+    assert m[9] == 11 and m[10] == 11, "NeoGeo DB15 Coin must share Select: %s" % show(neogeo, m, "DB15")
+    assert derive(neogeo)[10] == 11, "NeoGeo DB9MD Coin must sit on Mode"
+
     # A 3-face core keeps A: it is unplayable on a 2-button pad either way.
     three = j1("Fire 1,Fire 2,Fire 3,Start,Coin")
     assert derive(three)[4:7] == [4, 5, 6], derive(three)
@@ -401,7 +413,7 @@ def cmd_self_test():
 
     # pack36 / hardcoded_default mirror db9_map_stream / db9_map_hardcoded_default.
     neo = j1("A,B,C,D,Start,Select,Coin,ABC,A+B,C+D")
-    assert pack36(derive(neo, "DB15")) == 0x98FBA7654, hex(pack36(derive(neo, "DB15")))
+    assert pack36(derive(neo, "DB15")) == 0x98BBA7654, hex(pack36(derive(neo, "DB15")))
     assert pack36(derive(neo, "DB9MD")) == 0x98BFA7654, hex(pack36(derive(neo, "DB9MD")))
     assert hardcoded_default("DB15")[4:12] == [4, 5, 6, 7, 8, 9, 11, 10]
     assert hardcoded_default("SATURN")[8:10] == [12, 11]
