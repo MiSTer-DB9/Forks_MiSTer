@@ -166,6 +166,15 @@ def derive(labels, devtype="DB9MD", rule="new"):
     exact = PHYS[devtype]
     has_r = any(n.lower() in ("r", "rt") for _, n in real)
 
+    # db9_map.cpp cat_of(): "Run" is TG16's Start, but on a core that also names
+    # a real Start it is a gameplay button (Koshien's baseball "Run").
+    has_start = rule == "new" and any(category(n, rule) == START and n.lower() != "run"
+                                      for _, n in real)
+
+    def cat(n):
+        c = category(n, rule)
+        return GAMEPLAY if c == START and has_start and n.lower() == "run" else c
+
     used = 0
     if rule == "new":
         # Face budget: a 2-button pad on DB9MD can never press raw4(A), so retire
@@ -173,7 +182,7 @@ def derive(labels, devtype="DB9MD", rule="new"):
         # skips claimed bits. See db9_map.cpp for the joydb9md.v rationale.
         face_cnt = sum(1 for _, n in real
                        if 4 <= exact.get(n.lower(), -1) <= 9
-                       or (exact.get(n.lower(), -1) < 0 and category(n, rule) == GAMEPLAY))
+                       or (exact.get(n.lower(), -1) < 0 and cat(n) == GAMEPLAY))
         if devtype == "DB9MD" and face_cnt <= 2:
             used |= 1 << 4
 
@@ -188,7 +197,7 @@ def derive(labels, devtype="DB9MD", rule="new"):
         for pos, n in real:
             if m[pos + 4] != NONE:
                 continue
-            place(pos + 4, n, category(n, rule))
+            place(pos + 4, n, cat(n))
 
     def claim_sel(slot):
         nonlocal used
@@ -243,7 +252,7 @@ def derive(labels, devtype="DB9MD", rule="new"):
     each(p_secondary)
     # Coin with no home left shares raw11 with a Pass-1 exact Select/Mode (DB15
     # "Select" on NeoGeo); mirrors sel_on_11 in db9_map.cpp.
-    if rule == "new" and any(m[p + 4] == 11 and category(n, rule) == SEL for p, n in real):
+    if rule == "new" and any(m[p + 4] == 11 and cat(n) == SEL for p, n in real):
         each(lambda s, n, c: m.__setitem__(s, 11) if c == COIN else None)
     return m
 
@@ -377,6 +386,12 @@ def cmd_self_test():
     m = derive(neogeo, "DB15")
     assert m[9] == 11 and m[10] == 11, "NeoGeo DB15 Coin must share Select: %s" % show(neogeo, m, "DB15")
     assert derive(neogeo)[10] == 11, "NeoGeo DB9MD Coin must sit on Mode"
+
+    # Koshien: baseball "Run" is gameplay when a real Start exists.
+    koshien = j1("Charge,Throw,Run,Start,Coin,Pause")
+    m = derive(koshien, "DB15")
+    assert m[6] != NONE and m[7] == 10, show(koshien, m, "DB15")
+    assert derive(j1("I,II,Select,Run"))[7] == 10, "TG16 Run must stay Start"
 
     # A 3-face core keeps A: it is unplayable on a 2-button pad either way.
     three = j1("Fire 1,Fire 2,Fire 3,Start,Coin")
