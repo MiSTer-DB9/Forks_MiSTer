@@ -758,13 +758,25 @@ JOY_RAW_BIND_RE = re.compile(
 )
 
 
+JOY_RAW_GATED_RE = re.compile(
+    r'^([ \t]*)\.joy_raw\(\s*OSD_STATUS\s*\?\s*joy_raw_payload\s*:\s*16\'(?:b0|h0+)\s*\)',
+    flags=re.MULTILINE,
+)
+
+
 def replace_joy_raw(text: str) -> tuple[str, bool]:
     if 'joy_raw_payload' not in text:
         # joy_raw_payload is declared by replace_joy_flag_block — but the
         # binding to hps_io is what we update here.
         pass
+    # Migrate the old OSD_STATUS-gated binding to the ungated one. Main_MiSTer
+    # needs DB9 button edges during gameplay for its idle timers (hdmi_off, CEC
+    # sleep) and reapplies the OSD gate in software for everything else.
+    text, n = JOY_RAW_GATED_RE.subn(r'\1.joy_raw(joy_raw_payload)', text)
+    if n:
+        return text, True
     # Skip if hps_io binding already uses joy_raw_payload
-    if re.search(r'\.joy_raw\(\s*OSD_STATUS\s*\?\s*joy_raw_payload', text):
+    if re.search(r'\.joy_raw\(\s*joy_raw_payload', text):
         return text, False
     m = JOY_RAW_BIND_RE.search(text)
     if not m:
@@ -772,7 +784,7 @@ def replace_joy_raw(text: str) -> tuple[str, bool]:
     indent, comma = m.group(1), m.group(2)
     new_block = (
         f'{indent}// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joy_raw\n'
-        f'{indent}.joy_raw(OSD_STATUS ? joy_raw_payload : 16\'b0),\n'
+        f'{indent}.joy_raw(joy_raw_payload),\n'
         f'{indent}// [MiSTer-DB9 END]\n'
         f'{indent}// [MiSTer-DB9-Pro BEGIN] - Saturn key gate\n'
         f'{indent}.saturn_unlocked(saturn_unlocked){comma}\n'
@@ -1121,11 +1133,11 @@ def add_joydb_remap_defaults(text: str) -> tuple[str, bool]:
     return text, changed
 
 
-# Migrated `.joy_raw(OSD_STATUS ? joy_raw_payload ...)` binding anchor on the
+# Migrated `.joy_raw(joy_raw_payload)` binding anchor on the
 # core's hps_io instance. The db9_remap_* bindings sit right after it, inside
 # the same always-free DB9 block (matches the SNES reference wiring).
 HPS_JOY_RAW_MIGRATED_RE = re.compile(
-    r'^(?P<indent>[ \t]*)\.joy_raw\(\s*OSD_STATUS\s*\?\s*joy_raw_payload[^\n]*\n',
+    r'^(?P<indent>[ \t]*)\.joy_raw\(\s*(?:OSD_STATUS\s*\?\s*)?joy_raw_payload[^\n]*\n',
     flags=re.MULTILINE,
 )
 

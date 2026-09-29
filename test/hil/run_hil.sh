@@ -15,8 +15,8 @@
 # the expected keycodes plus the [15:14] type-detect = DB15.
 #
 # COVERAGE LIMIT (printed again at end): joy_raw is the OSD-navigation subset
-# (14 bits, populated only when OSD open: hps_io binds
-# .joy_raw(OSD_STATUS ? joy_raw_payload : 16'b0)). This proves "DB15 port is
+# (14 bits; the core reports it always, Main_MiSTer masks it to OSD-open
+# for navigation). This proves "DB15 port is
 # wired and decodes". Full per-button in-game coverage = InputTest_MiSTer
 # screen (manual / mrext screenshot), not this scripted gate.
 #
