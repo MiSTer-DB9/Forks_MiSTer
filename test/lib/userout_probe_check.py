@@ -24,6 +24,10 @@
 # USER_OUT_DRIVE. The const-idle in the guarded SNAC/peripheral branch is fine
 # -- it is never the terminal else.
 #
+# Also catches the same bug with no terminal `else` at all: the block assigns a
+# constant idle default before its first `if` and only a selector-gated branch
+# drives USER_OUT_DRIVE (Minimig/AtariST/X68000 MT32 compose, 2026-09).
+#
 # Also catches the selector-gated strap form
 #   assign USER_OUT[2] = joy_saturn_en ? USER_OUT_DRIVE[2] : 1'b1;
 # (SNES Saturn 2P-mux SEL, pre-fix): a USER_OUT ternary whose condition is a
@@ -79,8 +83,10 @@ STRAP_TERNARY_RE = re.compile(
 # begin/end (and case/function/task) nesting tokens + always/else/if for the
 # depth-aware relay walk. Longer `end*` forms precede `end` so the alternation
 # binds them first.
+# `(?<!`)` skips preprocessor directives: a `` `else `` inside an
+# `ifdef SECOND_MT32 block is not a Verilog else.
 _BLK = re.compile(
-    r"\b(always_comb|always_ff|always_latch|always|begin|endcase|endfunction"
+    r"(?<!`)\b(always_comb|always_ff|always_latch|always|begin|endcase|endfunction"
     r"|endtask|end|casez|casex|case|function|task|else|if)\b")
 _OPEN = {"begin", "case", "casez", "casex", "function", "task"}
 _CLOSE = {"end", "endcase", "endfunction", "endtask"}
@@ -141,6 +147,27 @@ def _terminal_else_findings(text):
                 nxt = toks[k + 1][0] if k + 1 < n else ""
                 if nxt != "if":
                     last_else = k
+        if last_else < 0:
+            # No terminal else: the selector-Off path keeps whatever the block
+            # assigned before its first `if`. A constant-idle default there
+            # strands the probe exactly like an idle terminal else (Minimig /
+            # AtariST / X68000 MT32 compose: `USER_OUT = 8'hFF; if (joy_any_en)
+            # USER_OUT = USER_OUT_DRIVE; else if (mt32_use) ...`).
+            first_if = next((k for k in range(b + 1, min(body_close, n))
+                             if toks[k][0] == "if"), None)
+            if first_if is not None:
+                pre = text[toks[b][2]:toks[first_if][1]]
+                body = text[toks[b][2]:toks[body_close][1]]
+                if (USER_OUT_IDLE_ASSIGN_RE.search(pre)
+                        and not USER_OUT_DRIVE_ASSIGN_RE.search(pre)
+                        and USER_OUT_DRIVE_ASSIGN_RE.search(body)):
+                    line = _line_no(text, toks[b][1])
+                    findings.append((
+                        "FATAL", line,
+                        "USER_OUT relay defaults to constant idle with no "
+                        "terminal `else` -- the selector-Off path keeps the "
+                        "idle default, so the OSD-open probe can't drive the "
+                        "USER_IO pins; default to USER_OUT_DRIVE"))
         if last_else >= 0:
             # Extract the else arm's text span.
             nxt_i = last_else + 1
