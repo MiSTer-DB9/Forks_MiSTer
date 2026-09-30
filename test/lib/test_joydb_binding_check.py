@@ -6,6 +6,9 @@
 #   * full instance (every canonical port bound)  -> PASS exit 0
 #   * full instance minus one port (dropped .X(.)) -> FATAL exit 1, names X
 #   * no `joydb joydb` instance (bespoke)          -> n/a  exit 0
+#   * remap_default_db15 unbound                   -> FATAL exit 1
+#   * hps_io `.joy_raw (OSD_STATUS ? ...)` gated   -> FATAL exit 1
+#   * second emu .sv in the dir drops a port       -> FATAL exit 1
 #
 #   python3 test/lib/test_joydb_binding_check.py  # "JOYDBBIND selftest: PASS"
 # Exit 0 = all cases pass, 1 = a case regressed.
@@ -46,11 +49,19 @@ def na_instance():
     return "// bespoke core: no joydb wrapper\n"
 
 
-def write_case(root, name, instance):
+def gated_instance(ports):
+    hps = "hps_io hps_io (\n  .joy_raw   ( OSD_STATUS ? joy_raw_payload : 16'b0 )\n);\n"
+    return full_instance(ports) + hps
+
+
+def write_case(root, name, instance, second=None):
     d = os.path.join(root, name, "Core_MiSTer")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "core.sv"), "w") as f:
         f.write(core_sv(instance))
+    if second is not None:
+        with open(os.path.join(d, "second.sv"), "w") as f:
+            f.write(core_sv(second))
     return d
 
 
@@ -69,17 +80,22 @@ def main():
     drop = "joy_raw" if "joy_raw" in req else req[-1]
 
     cases = [
-        ("ok",      full_instance(req),         0, "PASS"),
-        ("missing", missing_instance(req, drop), 1, drop),
-        ("na",      na_instance(),              0, "n/a"),
+        ("ok",      full_instance(req),         0, "PASS", None),
+        ("missing", missing_instance(req, drop), 1, drop, None),
+        ("na",      na_instance(),              0, "n/a", None),
+        ("remapdef", missing_instance(req, "remap_default_db15"), 1,
+         "remap_default_db15", None),
+        ("gated",   gated_instance(req),        1, "gated on OSD_STATUS", None),
+        ("second",  full_instance(req),         1, "[second.sv]",
+         missing_instance(req, drop)),
         # regression guard: ensure ok stays PASS (no spurious FAIL)
-        ("ok2",     full_instance(req),         0, None),
+        ("ok2",     full_instance(req),         0, None, full_instance(req)),
     ]
 
     fails = []
     with tempfile.TemporaryDirectory(prefix="jbtest.") as root:
-        for name, instance, want_rc, want in cases:
-            d = write_case(root, name, instance)
+        for name, instance, want_rc, want, second in cases:
+            d = write_case(root, name, instance, second)
             rc, out = run(d)
             ok = (rc == want_rc)
             if want is None:

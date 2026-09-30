@@ -17,15 +17,21 @@
 # non-ported / pristine upstream) is n/a -- there is no "legitimately
 # missing port" case (unlike satgate's InputTest 1'b1 tie), so this GATES.
 #
-# EXCEPTION -- OPTIONAL_PORTS (below): a few canonical ports are excused. Two
+# EXCEPTION -- OPTIONAL_PORTS (below): two canonical ports are excused. They
 # are ADVISORY OUTPUTS the WRAPPER_BLOCK deliberately does NOT emit (commit
 # a79778f) -- an unconnected output is harmless in Verilog (no silently-dead
-# path). Two are the remap_default_* INPUTS, excused only while the factory-
-# default re-port rolls out across the fleet; the PASS line names every core
-# still missing them, so the report doubles as the rollout tracker. Drop them
-# from the set once the fleet is re-ported, so a merge that strips the binding
-# FATALs again instead of silently reverting that core to dead buttons on a
-# stock MiSTer binary.
+# path). The remap_default_* inputs are NOT excused: unbound, Quartus grounds
+# them, every DB9 button slot reads NONE and DB15/DB9MD face buttons go dead
+# on a stock MiSTer binary.
+#
+# Also FATAL: the hps_io `.joy_raw` bound to an `OSD_STATUS ? ...` ternary.
+# Main_MiSTer needs DB9 button edges during gameplay for its idle timers
+# (hdmi_off, CEC sleep) and reapplies the OSD gate itself, so a gated binding
+# blanks the screen mid-play.
+#
+# Every .sv in the core dir (and rtl/, for jtframe `rtl/emu.sv` cores) that
+# holds a `joydb joydb` instance is checked, so the second core of a
+# multi-core repo (Atari800.sv next to Atari5200.sv) is covered too.
 #
 # Required-port set is parsed from the live canonical header, so it
 # auto-tracks if a port is ever added/removed there.
@@ -69,13 +75,8 @@ _CONN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*\(")
 # silently dead), an unconnected OUTPUT is harmless in Verilog, so it must not
 # FATAL the binding completeness guard.
 OPTIONAL_OUTPUTS = {"pad_1_6btn", "pad_2_6btn"}
-# INPUTS excused only for the duration of the factory-default rollout. Quartus
-# grounds an unconnected input port, so all-zero reads as "no factory default"
-# (every button slot NONE until Main_MiSTer streams 0xFD) -- the pre-default
-# behaviour, not a dead path. Named in the PASS line below so the fleet audit
-# shows which cores still need the re-port. Remove once the fleet carries them.
-PENDING_INPUTS = {"remap_default_db15", "remap_default_db9md"}
-OPTIONAL_PORTS = OPTIONAL_OUTPUTS | PENDING_INPUTS
+OPTIONAL_PORTS = OPTIONAL_OUTPUTS
+_GATED_JOY_RAW_RE = re.compile(r"\.\s*joy_raw\s*\(\s*OSD_STATUS\s*\?")
 
 
 def required_ports(core_dir=None):
@@ -125,6 +126,76 @@ def bound_ports(text):
     return set(_CONN_RE.findall(span))
 
 
+def joydb_svs(core_dir):
+    """Every .sv under <core_dir> and <core_dir>/rtl with a joydb instance."""
+    out = []
+    for sub in ("", "rtl"):
+        d = os.path.join(core_dir, sub)
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for f in names:
+            path = os.path.join(d, f)
+            if not f.endswith(".sv") or not os.path.isfile(path):
+                continue
+            try:
+                if "joydb joydb" in open(path, "r", errors="replace").read():
+                    out.append(path)
+            except OSError:
+                pass
+    return out
+
+
+def check_sv(core_dir, core_sv, req):
+    cb = os.path.relpath(core_sv, core_dir)
+    try:
+        text = strip_comments(open(core_sv, "r", errors="replace").read())
+    except OSError as e:
+        print(f"  joydb-bind: FAIL parse error ({e})  [{cb}]")
+        return 2
+
+    bound = bound_ports(text)
+    if bound is None:
+        # No `joydb joydb` instance -> bespoke / non-ported / pristine
+        # upstream. No canonical lookup needed; no FP path.
+        print(f"  joydb-bind: n/a  no joydb wrapper (bespoke / non-ported / "
+              f"pristine upstream)  [{cb}]")
+        return 0
+
+    if len(req) < 2:
+        print(f"  joydb-bind: FAIL canonical joydb.sv unparsable (tried "
+              f"{CANON_UMBRELLA} and {core_dir}/sys/joydb.sv)")
+        return 2
+
+    rc = 0
+    missing = [p for p in req if p not in bound and p not in OPTIONAL_PORTS]
+    if missing:
+        print(f"  joydb-bind: FAIL unbound canonical joydb port(s): "
+              f"{', '.join(missing)} -- controller path silently dead  "
+              f"[{cb}]")
+        rc = 1
+    if _GATED_JOY_RAW_RE.search(text):
+        print(f"  joydb-bind: FAIL hps_io .joy_raw gated on OSD_STATUS -- "
+              f"DB9 play cannot reset hdmi_off / CEC sleep; bind "
+              f".joy_raw(joy_raw_payload)  [{cb}]")
+        rc = 1
+    if rc:
+        return rc
+    # Don't claim "all N bound" — an unbound OPTIONAL output passes the gate but
+    # is genuinely unconnected, so report the real bound count and name the
+    # skipped advisory ports.
+    opt_unbound = [p for p in req if p in OPTIONAL_PORTS and p not in bound]
+    if opt_unbound:
+        print(f"  joydb-bind: PASS  {len(req) - len(opt_unbound)} of "
+              f"{len(req)} canonical joydb ports bound; advisory output "
+              f"port(s) left unbound (ok): {', '.join(opt_unbound)}  [{cb}]")
+    else:
+        print(f"  joydb-bind: PASS  all {len(req)} canonical joydb ports bound  "
+              f"[{cb}]")
+    return 0
+
+
 def main(argv):
     if len(argv) not in (2, 3):
         print("usage: joydb_binding_check.py <core_dir> [<core_sv_basename>]",
@@ -136,53 +207,19 @@ def main(argv):
         core_sv = os.path.join(core_dir, argv[2])
     else:
         core_sv = find_core_sv(core_dir)
-    cb = os.path.basename(core_sv) if core_sv else ""
-    print(f"  joydb-bind-coresv: {cb}")
-    if not core_sv:
+    svs = ([core_sv] if core_sv else []) + \
+        [p for p in joydb_svs(core_dir)
+         if not core_sv or not os.path.samefile(p, core_sv)]
+    print(f"  joydb-bind-coresv: "
+          f"{' '.join(os.path.relpath(p, core_dir) for p in svs)}")
+    if not svs:
         print(f"  joydb-bind: FAIL no <core>.sv declaring `module emu` in "
               f"{core_dir}")
         return 2
 
-    try:
-        text = strip_comments(open(core_sv, "r", errors="replace").read())
-    except OSError as e:
-        print(f"  joydb-bind: FAIL parse error ({e})")
-        return 2
-
-    bound = bound_ports(text)
-    if bound is None:
-        # No `joydb joydb` instance -> bespoke / non-ported / pristine
-        # upstream. No canonical lookup needed; no FP path.
-        print(f"  joydb-bind: n/a  no joydb wrapper (bespoke / non-ported / "
-              f"pristine upstream)  [{cb}]")
-        return 0
-
     req = required_ports(core_dir)
-    if len(req) < 2:
-        print(f"  joydb-bind: FAIL canonical joydb.sv unparsable (tried "
-              f"{CANON_UMBRELLA} and {core_dir}/sys/joydb.sv)")
-        return 2
-
-    missing = [p for p in req if p not in bound and p not in OPTIONAL_PORTS]
-    if missing:
-        print(f"  joydb-bind: FAIL unbound canonical joydb port(s): "
-              f"{', '.join(missing)} -- controller path silently dead  "
-              f"[{cb}]")
-        return 1
-    # Don't claim "all N bound" — an unbound OPTIONAL output passes the gate but
-    # is genuinely unconnected, so report the real bound count and name the
-    # skipped advisory ports.
-    opt_unbound = [p for p in req if p in OPTIONAL_PORTS and p not in bound]
-    if opt_unbound:
-        kind = ("advisory/pending" if any(p in PENDING_INPUTS for p in opt_unbound)
-                else "advisory output")
-        print(f"  joydb-bind: PASS  {len(req) - len(opt_unbound)} of "
-              f"{len(req)} canonical joydb ports bound; {kind} port(s) "
-              f"left unbound (ok): {', '.join(opt_unbound)}  [{cb}]")
-    else:
-        print(f"  joydb-bind: PASS  all {len(req)} canonical joydb ports bound  "
-              f"[{cb}]")
-    return 0
+    rcs = [check_sv(core_dir, p, req) for p in svs]
+    return 1 if 1 in rcs else max(rcs)
 
 
 if __name__ == "__main__":
