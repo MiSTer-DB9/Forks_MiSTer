@@ -54,6 +54,8 @@ SNAC_CORES = {
     "PSX_MiSTer": "snacPort1 | snacPort2",
     "Atari7800_MiSTer": "is_snac0 | is_snac1",
     "SGB_MiSTer": "snac_snes | snac_gb",
+    "C16_MiSTer": "ext_iec_en",
+    "VIC20_MiSTer": "snac_en | ext_iec_en",
     "SYSTEM11_MiSTer": "snacPort1 | snacPort2",
 }
 
