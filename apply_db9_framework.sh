@@ -19,6 +19,22 @@ apply_db9_framework() {
     upgrader=$(realpath porting/upgrade_pro_additive.py)
     porter=$(realpath porting/port_core_full.py)
 
+    # Forks.ini `CORE_DIR` cores (SYSTEM11_MiSTer/source) keep the Quartus
+    # project in a subdir. When the repo root has neither a `.qpf` nor `sys/`,
+    # descend into the one subdir that has both (same test as
+    # test/lib/list_cores.sh:list_subdir_cores). Anything else is ambiguous.
+    if ! compgen -G "${dir}/*.qpf" >/dev/null && [ ! -d "${dir}/sys" ]; then
+        local cands=() c
+        for c in "${dir}"/*/; do
+            compgen -G "${c}*.qpf" >/dev/null && [ -d "${c}sys" ] && cands+=("${c%/}")
+        done
+        if [ "${#cands[@]}" -ne 1 ]; then
+            echo "apply_db9_framework: ${dir}: no .qpf/sys at root and ${#cands[@]} subdir candidates" >&2
+            exit 1
+        fi
+        dir="${cands[0]}"
+    fi
+
     cp -r fork_ci_template/sys "${dir}/"
 
     # Pre-SV-rename forks ship `sys/hps_io.v` (Verilog), post-rename ones ship

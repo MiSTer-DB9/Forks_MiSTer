@@ -38,15 +38,18 @@ from _eol_io import read_text, write_text  # noqa: E402
 import derive_preview  # noqa: E402  (db9_map.cpp factory-default model)
 
 
-def find_emu_sv(core_dir: Path) -> Path | None:
-    for sv in core_dir.glob('*.sv'):
+def find_emu_sv(core_dir: Path) -> list[Path]:
+    # Every `module emu` .sv: multi-core repos (Atari800.sv + Atari5200.sv)
+    # carry one per core and each needs the port.
+    found = []
+    for sv in sorted(core_dir.glob('*.sv')):
         try:
             t = sv.read_text(encoding='utf-8', errors='replace')
         except OSError:
             continue
         if re.search(r'^\s*module\s+emu\s*[\(#]', t, re.MULTILINE):
-            return sv
-    return None
+            found.append(sv)
+    return found
 
 
 # ---- Wrapper boilerplate (drop-in replacement for JOY_FLAG block) ----
@@ -753,15 +756,30 @@ def wrap_joystick_mux(text: str) -> tuple[str, int]:
 # Match `.joy_raw(...)` with up to one level of nested parens
 # (e.g. `.joy_raw(OSD_STATUS? (joydb_1[5:0]|joydb_2[5:0]) : 6'b0)`).
 JOY_RAW_BIND_RE = re.compile(
-    r'^([ \t]*)\.joy_raw\((?:[^()]|\([^()]*\))*\)([ \t]*,?)[ \t]*(?://[^\n]*)?$',
+    r'^([ \t]*)\.joy_raw[ \t]*\((?:[^()]|\([^()]*\))*\)([ \t]*,?)[ \t]*(?://[^\n]*)?$',
     flags=re.MULTILINE,
 )
 
 
 JOY_RAW_GATED_RE = re.compile(
-    r'^([ \t]*)\.joy_raw\(\s*OSD_STATUS\s*\?\s*joy_raw_payload\s*:\s*16\'(?:b0|h0+)\s*\)',
+    r'^([ \t]*\.joy_raw[ \t]*\([ \t]*)OSD_STATUS\s*\?\s*joy_raw_payload\s*:\s*16\'(?:b0|h0+)([ \t]*\))',
     flags=re.MULTILINE,
 )
+
+
+# The joydb instance carries its own aligned `.joy_raw ( joy_raw_payload )`
+# output port, which the whitespace-tolerant patterns above also match. Only
+# the hps_io binding may be rewritten, so skip matches inside that instance.
+_JOYDB_INST_RE = re.compile(r'^[ \t]*joydb[ \t]+joydb[ \t]*\(.*?^[ \t]*\);', re.MULTILINE | re.DOTALL)
+
+
+def search_hps_joy_raw(rx: re.Pattern, text: str) -> re.Match | None:
+    inst = _JOYDB_INST_RE.search(text)
+    lo, hi = inst.span() if inst else (0, 0)
+    for m in rx.finditer(text):
+        if not lo <= m.start() < hi:
+            return m
+    return None
 
 
 def replace_joy_raw(text: str) -> tuple[str, bool]:
@@ -772,13 +790,13 @@ def replace_joy_raw(text: str) -> tuple[str, bool]:
     # Migrate the old OSD_STATUS-gated binding to the ungated one. Main_MiSTer
     # needs DB9 button edges during gameplay for its idle timers (hdmi_off, CEC
     # sleep) and reapplies the OSD gate in software for everything else.
-    text, n = JOY_RAW_GATED_RE.subn(r'\1.joy_raw(joy_raw_payload)', text)
+    text, n = JOY_RAW_GATED_RE.subn(r'\1joy_raw_payload\2', text)
     if n:
         return text, True
     # Skip if hps_io binding already uses joy_raw_payload
-    if re.search(r'\.joy_raw\(\s*joy_raw_payload', text):
+    if search_hps_joy_raw(re.compile(r'\.joy_raw[ \t]*\(\s*joy_raw_payload'), text):
         return text, False
-    m = JOY_RAW_BIND_RE.search(text)
+    m = search_hps_joy_raw(JOY_RAW_BIND_RE, text)
     if not m:
         return text, False
     indent, comma = m.group(1), m.group(2)
@@ -1137,7 +1155,7 @@ def add_joydb_remap_defaults(text: str) -> tuple[str, bool]:
 # core's hps_io instance. The db9_remap_* bindings sit right after it, inside
 # the same always-free DB9 block (matches the SNES reference wiring).
 HPS_JOY_RAW_MIGRATED_RE = re.compile(
-    r'^(?P<indent>[ \t]*)\.joy_raw\(\s*(?:OSD_STATUS\s*\?\s*)?joy_raw_payload[^\n]*\n',
+    r'^(?P<indent>[ \t]*)\.joy_raw[ \t]*\(\s*(?:OSD_STATUS\s*\?\s*)?joy_raw_payload[^\n]*\n',
     flags=re.MULTILINE,
 )
 
@@ -1148,7 +1166,7 @@ def add_hps_io_remap_bindings(text: str) -> tuple[str, bool]:
     so an already-saturn-migrated core (fleet re-port) still gains them."""
     if '.db9_remap_cmd(' in text:
         return text, False
-    m = HPS_JOY_RAW_MIGRATED_RE.search(text)
+    m = search_hps_joy_raw(HPS_JOY_RAW_MIGRATED_RE, text)
     if not m:
         return text, False
     indent = m.group('indent')
@@ -1362,9 +1380,13 @@ def swap_joystick_mapped(text: str) -> tuple[str, int]:
 
 def port_core(core_dir: Path) -> list[str]:
     notes: list[str] = []
-    sv = find_emu_sv(core_dir)
-    if not sv:
-        return [f'{core_dir}: no <core>.sv with `module emu` found']
+    for sv in find_emu_sv(core_dir):
+        notes += port_emu_sv(core_dir, sv)
+    return notes
+
+
+def port_emu_sv(core_dir: Path, sv: Path) -> list[str]:
+    notes: list[str] = []
 
     text, nl = read_text(sv)
     is_wrapper_thin = 'joydb joydb' in text
@@ -1575,6 +1597,9 @@ def main(argv: list[str]) -> int:
     d = Path(argv[0]).resolve()
     if not d.is_dir():
         print(f'{d}: not a directory', file=sys.stderr)
+        return 1
+    if not find_emu_sv(d):
+        print(f'{d}: no <core>.sv with `module emu` found', file=sys.stderr)
         return 1
     for note in port_core(d):
         print(f'  {note}')
