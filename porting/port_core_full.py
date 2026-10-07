@@ -1376,6 +1376,42 @@ def swap_joystick_mapped(text: str) -> tuple[str, int]:
     return ''.join(out), n
 
 
+_MAPPED_SLICE_RE = re.compile(r'joydb_([12])_mapped\[(\d+):0\]')
+_MRA_BUTTONS_RE = re.compile(r'<buttons[^>]*\bnames="([^"]*)"')
+
+
+def mapped_top_bit(text: str, core_dir: Path) -> int:
+    """Highest joystick bit the matrix must reach: bit 3 + the longest button
+    list the core declares (CONF_STR J1, or any MRA <buttons names=...>, which
+    is what Main_MiSTer derives arcade defaults from), capped at slot 12. The
+    old fixed permutation's width is no guide: it often stopped short of
+    Start/Coin/Pause/Service, so those buttons never reached the core."""
+    n = len(derive_preview.labels_from_j1(text) or [])
+    for mra in core_dir.glob('releases/**/*.mra'):
+        for names in _MRA_BUTTONS_RE.findall(mra.read_text(errors='replace')):
+            n = max(n, len(names.split(',')))
+    return min(12, 3 + n)
+
+
+def widen_mapped(text: str, top: int) -> tuple[str, int]:
+    """Widen every live `joydb_N_mapped[H:0]` with H < top to `[top:0]`.
+    Idempotent; `//` comment lines are left alone."""
+    n = 0
+
+    def sub(m):
+        nonlocal n
+        if int(m.group(2)) >= top:
+            return m.group(0)
+        n += 1
+        return 'joydb_%s_mapped[%d:0]' % (m.group(1), top)
+
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith('//'):
+            lines[i] = _MAPPED_SLICE_RE.sub(sub, line)
+    return '\n'.join(lines), n
+
+
 # ---- Orchestrator ----
 
 def port_core(core_dir: Path) -> list[str]:
@@ -1555,6 +1591,10 @@ def port_emu_sv(core_dir: Path, sv: Path) -> list[str]:
         text, n = swap_joystick_mapped(text)
         if n:
             notes.append(f'{sv.name}: Layer B — consumed joydb_*_mapped at {n} gameplay merge(s)')
+        top = mapped_top_bit(text, core_dir)
+        text, n = widen_mapped(text, top)
+        if n:
+            notes.append(f'{sv.name}: Layer B: widened {n} joydb_*_mapped slice(s) to [{top}:0]')
     else:
         notes.append(f'{sv.name}: Layer B swap SKIPPED (excluded core — hand-wired merge preserved)')
     # clk_sys is the HPS-bus clock the matrix selector loads on. Most cores name

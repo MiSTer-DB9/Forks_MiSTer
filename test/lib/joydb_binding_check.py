@@ -78,6 +78,30 @@ OPTIONAL_OUTPUTS = {"pad_1_6btn", "pad_2_6btn"}
 OPTIONAL_PORTS = OPTIONAL_OUTPUTS
 _GATED_JOY_RAW_RE = re.compile(r"\.\s*joy_raw\s*\(\s*OSD_STATUS\s*\?")
 
+# Layer B slice width. Main_MiSTer maps one DB9 button per declared label
+# (CONF_STR J1/J, or the MRA <buttons names=...> on arcade cores) starting at
+# bit 4, up to slot 12. A `joydb_N_mapped[H:0]` cut below that drops the top
+# buttons (Start/Coin/Pause/Service) on a DB9 pad while the Define page still
+# shows them mapped. Same rule as port_core_full.py mapped_top_bit().
+_J_RE = re.compile(r'"J1?,([^"]*)"')
+_MAPPED_RE = re.compile(r"joydb_[12]_mapped\[(\d+):0\]")
+_MRA_BUTTONS_RE = re.compile(r'<buttons[^>]*\bnames="([^"]*)"')
+
+
+def mapped_top_bit(text, core_dir):
+    m = _J_RE.search(text)
+    n = len(m.group(1).rstrip(";").split(",")) if m else 0
+    for root, _, files in os.walk(os.path.join(core_dir, "releases")):
+        for f in files:
+            if f.endswith(".mra"):
+                try:
+                    s = open(os.path.join(root, f), errors="replace").read()
+                except OSError:
+                    continue
+                for names in _MRA_BUTTONS_RE.findall(s):
+                    n = max(n, len(names.split(",")))
+    return min(12, 3 + n)
+
 
 def required_ports(core_dir=None):
     """Canonical joydb module port names (order-preserved). [] = unparsable.
@@ -180,6 +204,13 @@ def check_sv(core_dir, core_sv, req):
               f"DB9 play cannot reset hdmi_off / CEC sleep; bind "
               f".joy_raw(joy_raw_payload)  [{cb}]")
         rc = 1
+    his = [int(h) for h in _MAPPED_RE.findall(text)]
+    if his:
+        top = mapped_top_bit(text, core_dir)
+        if min(his) < top:
+            print(f"  joydb-bind: FAIL joydb_*_mapped[{min(his)}:0] narrower "
+                  f"than the declared buttons; widen to [{top}:0]  [{cb}]")
+            rc = 1
     if rc:
         return rc
     # Don't claim "all N bound" — an unbound OPTIONAL output passes the gate but

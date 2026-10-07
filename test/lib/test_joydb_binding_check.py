@@ -54,6 +54,12 @@ def gated_instance(ports):
     return full_instance(ports) + hps
 
 
+def narrow_instance(ports, hi):
+    conf = '"J1,Fire,Start 1P,Start 2P,Coin,Service;",\n'
+    merge = f"wire [15:0] j0 = OSD_STATUS ? 16'b0 : joydb_1_mapped[{hi}:0];\n"
+    return full_instance(ports) + conf + merge
+
+
 def write_case(root, name, instance, second=None):
     d = os.path.join(root, name, "Core_MiSTer")
     os.makedirs(d, exist_ok=True)
@@ -85,6 +91,8 @@ def main():
         ("na",      na_instance(),              0, "n/a", None),
         ("remapdef", missing_instance(req, "remap_default_db15"), 1,
          "remap_default_db15", None),
+        ("narrow",  narrow_instance(req, 7),    1, "widen to [8:0]", None),
+        ("wide",    narrow_instance(req, 8),    0, "PASS", None),
         ("gated",   gated_instance(req),        1, "gated on OSD_STATUS", None),
         ("second",  full_instance(req),         1, "[second.sv]",
          missing_instance(req, drop)),
