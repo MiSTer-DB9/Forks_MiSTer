@@ -59,6 +59,8 @@ SNAC_CORES = {
     "SYSTEM11_MiSTer": "snacPort1 | snacPort2",
     "CoCo3_MiSTer": "status[30]",
     "Arcade-TNKIII_MiSTer": "|SNAC_dev | |SNAC_LS30",
+    "CBM-II_MiSTer": "ext_iec_en",
+    "GameCom_MiSTer": "serial_snac_enable",
 }
 
 SNAC_ACTIVE_RE = re.compile(r"wire\s+snac_active\s*=\s*([^;]+);")
