@@ -139,6 +139,9 @@ def check(path):
 
     # 4 + 5. per-section schema + FORK/UPSTREAM basename parity
     for s in secs:
+        # setup_cicd.sh `declare`s each section name as a bash variable
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s):
+            errs.append(f"[{s}] section name is not a valid bash identifier")
         for key in REQUIRED_KEYS:
             if not c[s].get(key):
                 errs.append(f"[{s}] missing required key {key}")
