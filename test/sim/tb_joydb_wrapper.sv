@@ -29,9 +29,12 @@ module tb_joydb_wrapper;
   logic [15:0] joydb_1_mapped;
 
   logic [11:0] p1 = 12'h000, p2 = 12'h000;
+  logic        bclk_on = 1'b0, bclk = 1'b0;  // MT32-pi I2S BCLK model on USER_IN[4]
+  logic        readback = 1'b0;              // USER_IN[4] reads back the FPGA drive
   integer errors = 0;
 
   always #10 clk = ~clk;
+  always #200 bclk = ~bclk;  // 2.5 MHz, inside MT32-pi's 1-3 MHz BCLK range
 
   // Seed the inner DB15 free-running counter (no RTL init; FPGA powers to 0).
   initial dut.joy_db15_i.JCLOCKS = 16'h0000;
@@ -55,6 +58,8 @@ module tb_joydb_wrapper;
   always_comb begin
     USER_IN    = 8'hFF;
     USER_IN[5] = db15_bit(dut.joy_db15_i.joy_count);
+    if (readback) USER_IN[4] = USER_OUT_DRIVE[4];
+    if (bclk_on)  USER_IN[4] = bclk;
   end
 
   joydb dut (
@@ -227,6 +232,47 @@ module tb_joydb_wrapper;
     //      not directly testable here (TB hardwires both to 1'b0 at the
     //      port). Their gating is structural in probe_active and exercised
     //      by the integration suites (Saturn_MiSTer, ao486_MiSTer, etc.).
+
+    // ---- MT32-pi BCLK lockout ----
+    // FPGA strobes read back on pin 4 never trip the detector: DB9MD split
+    // (128-cycle period, the fastest) and Saturn S0.
+    osd_status = 1'b0; readback = 1'b1;
+    joy_type = 2'd2; #2_000_000;
+    chk("db9md split no trip",       dut.mt32_bclk_present, 1'b0);
+    joy_type = 2'd1; #2_000_000;
+    chk("saturn s0 no trip",         dut.mt32_bclk_present, 1'b0);
+    joy_type = 2'd0; readback = 1'b0; osd_status = 1'b1; #200;
+    // Probe running before the RPi starts.
+    chk("pre-bclk probe running",    dut.probe_active,  1'b1);
+    // No pad or FSM strobe trips the detector (probe + DB15 runs above).
+    chk("pre-bclk not present",      dut.mt32_bclk_present, 1'b0);
+    bclk_on = 1'b1;
+    #500_000;   // 0.5 ms: below the 1 ms arm window
+    chk("bclk 0.5ms not present",    dut.mt32_bclk_present, 1'b0);
+    #700_000;   // 1.2 ms total: armed
+    chk("bclk 1.2ms present",        dut.mt32_bclk_present, 1'b1);
+    chk("bclk probe off",            dut.probe_active,  1'b0);
+    chk("bclk OSD UPP released",     USER_PP_DRIVE,     8'b00000000);
+    chk("bclk OSD UOUT released",    USER_OUT_DRIVE,    8'hFF);
+    chk("bclk OSD ena1",             joydb_1ena,        1'b0);
+    chk("bclk OSD joy_raw",          joy_raw,           16'h0000);
+    // A user-picked mode is forced Off too; joy_raw keeps the selector type.
+    joy_type = 2'd3; p1 = 12'h440;
+    #200_000;
+    chk("bclk db15 joydb_1",         joydb_1,           16'h0000);
+    chk("bclk db15 USER_OSD",        USER_OSD,          1'b0);
+    chk("bclk db15 UPP released",    USER_PP_DRIVE,     8'b00000000);
+    chk("bclk db15 UOUT released",   USER_OUT_DRIVE,    8'hFF);
+    chk("bclk db15 joy_raw",         joy_raw,           {2'd3, 14'h0000});
+    // Unplug: hold runs out (shortened here from ~100 ms), FSM restarts.
+    bclk_on = 1'b0; joy_type = 2'd0; p1 = 12'h000;
+    #10_000;
+    chk("unplug still held",         dut.mt32_bclk_present, 1'b1);
+    dut.mt32_hold = 23'd1000;
+    #50_000;
+    chk("unplug released",           dut.mt32_bclk_present, 1'b0);
+    chk("unplug probe resumes",      dut.probe_active,  1'b1);
+    chk("unplug saturn_probe boot",  USER_PP_DRIVE,     8'b01010100);
 
     osd_status = 1'b0;  // leave FSM at rest for any downstream wave inspection
 

@@ -33,6 +33,14 @@
 // Suppressed when snac_active or mt32_primary_active drives USER_IO
 // externally.
 //
+// MT32-pi lockout: an RPi on the user port drives I2S on USER_IO[4]/[6]
+// (BCLK) and I2C on [0]/[3]. mt32_primary_active only covers cores whose MT32
+// path has already latched mt32_use, so the wrapper also detects the RPi from
+// its MHz bit clock (no pad or DB9 strobe toggles those pins faster than
+// ~1 us). While mt32_bclk_present is set the probe is off and the selector
+// acts as Off: every pin released, joydb_*/USER_OSD and the joy_raw buttons 0.
+// joy_raw keeps reporting the selected joy_type so Main never rewrites it.
+//
 // This file is fork-only (does not exist upstream), so it is implicitly
 // MiSTer-DB9. Only [MiSTer-DB9-Pro BEGIN/END] markers appear, to flag the
 // Key-gated sections (Saturn arms in the joystick mux). USER_PP_DRIVE is
@@ -110,13 +118,49 @@ module joydb
     output logic [15:0] joy_raw
 );
 
-wire probe_active = OSD_STATUS & ~snac_active & ~mt32_primary_active;
+// ---- MT32-pi presence detector (I2S BCLK on USER_IN[4]/[6]) ----
+// Per pin: 2-FF sync, then count clk cycles since the last rising edge,
+// saturating at 63 (~1.3-1.6 us at 40-50 MHz). MT32-pi BCLK (1-3 MHz) keeps
+// the count below 63. The fastest DB9 activity on these pins is the DB9MD
+// split line (and pin 6 data it muxes) at 128 clk cycles; Saturn S0/S1 change
+// every 256. ~1 ms of continuous fast edges arms a ~100 ms hold.
+localparam [15:0] MT32_BCLK_ARM  = 16'd49999;   // ~1 ms @ 50 MHz
+localparam [22:0] MT32_BCLK_HOLD = 23'd4999999; // ~100 ms @ 50 MHz
+reg  [2:0] mt32_bclk4_s = 3'b111, mt32_bclk6_s = 3'b111;
+reg  [5:0] mt32_per4 = 6'h3F, mt32_per6 = 6'h3F;
+reg [15:0] mt32_bclk_cnt = 16'd0;
+reg [22:0] mt32_hold = 23'd0;
+reg        mt32_bclk_present = 1'b0;
+always @(posedge clk) begin
+    mt32_bclk4_s <= {mt32_bclk4_s[1:0], USER_IN[4]};
+    mt32_bclk6_s <= {mt32_bclk6_s[1:0], USER_IN[6]};
 
-wire joy_db9md_en  = (joy_type == 2'd2);
-wire joy_db15_en   = (joy_type == 2'd3);
-wire joy_any_en    = |joy_type;
+    if (mt32_bclk4_s[1] & ~mt32_bclk4_s[2]) mt32_per4 <= 6'd0;
+    else if (~&mt32_per4)                    mt32_per4 <= mt32_per4 + 1'd1;
+    if (mt32_bclk6_s[1] & ~mt32_bclk6_s[2]) mt32_per6 <= 6'd0;
+    else if (~&mt32_per6)                    mt32_per6 <= mt32_per6 + 1'd1;
+
+    if (~&mt32_per4 | ~&mt32_per6) begin
+        if (mt32_bclk_cnt != MT32_BCLK_ARM) mt32_bclk_cnt <= mt32_bclk_cnt + 1'd1;
+    end
+    else mt32_bclk_cnt <= 16'd0;
+
+    if (mt32_bclk_cnt == MT32_BCLK_ARM) mt32_hold <= MT32_BCLK_HOLD;
+    else if (|mt32_hold)                mt32_hold <= mt32_hold - 1'd1;
+
+    mt32_bclk_present <= |mt32_hold;
+end
+
+wire probe_active = OSD_STATUS & ~snac_active & ~mt32_primary_active & ~mt32_bclk_present;
+
+// Selector as seen by the drive/data paths: Off while an MT32-pi is present.
+wire [1:0] joy_type_eff = mt32_bclk_present ? 2'd0 : joy_type;
+
+wire joy_db9md_en  = (joy_type_eff == 2'd2);
+wire joy_db15_en   = (joy_type_eff == 2'd3);
+wire joy_any_en    = |joy_type_eff;
 // [MiSTer-DB9-Pro BEGIN] - Saturn mode decode
-wire joy_saturn_en = (joy_type == 2'd1);
+wire joy_saturn_en = (joy_type_eff == 2'd1);
 // [MiSTer-DB9-Pro END]
 
 // ---- Menu_MiSTer-port autodetect FSM state (active only when probe_active=1) ----
@@ -249,8 +293,8 @@ endtask
 
 always @(posedge clk) begin
     if (~probe_active) begin
-        // OSD closed / SNAC / MT32-on-primary: hold FSM in reset; user-mode
-        // joy_type-driven muxes drive joydb_1/joydb_2.
+        // OSD closed / SNAC / MT32-on-primary / MT32-pi BCLK: hold FSM in
+        // reset; user-mode joy_type-driven muxes drive joydb_1/joydb_2.
         saturn_active      <= 1'b0;
         saturn_probe       <= 1'b1;
         saturn_settle      <= 1'b0;
