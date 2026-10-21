@@ -971,6 +971,17 @@ _AUDIO_OUT_RE = re.compile(
     flags=re.MULTILINE,
 )
 
+# Newer upstream sys registers the three outputs on clk_audio first; the
+# SW[0] selector then lives in the `aud_*_q <=` lines of that always block.
+_AUDIO_REG_RE = re.compile(
+    r'^(?P<indent>[ \t]*)aud_spdif_q[ \t]*<=[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_LRCLK[ \t]*:[ \t]*spdif;[^\n]*\n'
+    r'(?P=indent)aud_r_q[ \t]+<=[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_I2S[ \t]+:[ \t]*analog_r;[^\n]*\n'
+    r'(?P=indent)aud_l_q[ \t]+<=[ \t]*\(SW\[0\][ \t]*\|[ \t]*mcp_en\)[ \t]*\?[ \t]*HDMI_SCLK[ \t]+:[ \t]*analog_l;[^\n]*\n',
+    flags=re.MULTILINE,
+)
+_ANALOG_WIRE_RE = re.compile(r'^(?P<indent>[ \t]*)wire[ \t]+analog_l,[ \t]*analog_r;[^\n]*\n', flags=re.MULTILINE)
+_AUD_REG_DECL_RE = re.compile(r'^(?P<indent>[ \t]*)reg[ \t]+aud_spdif_q\b', flags=re.MULTILINE)
+
 
 def upgrade_sys_top_audio_mode(path: Path) -> list[str]:
     """Inject the AUDIO_MODE mister.ini override on the three SW[0]-gated
@@ -991,7 +1002,7 @@ def upgrade_sys_top_audio_mode(path: Path) -> list[str]:
         return []
     m = _AUDIO_OUT_RE.search(text)
     if not m:
-        return [f'{path}: AUDIO_SPDIF/R/L assigns not found — AUDIO_MODE patch skipped']
+        return upgrade_sys_top_audio_mode_reg(path, text, nl)
     indent = m.group('indent')
     replacement = (
         f'{indent}// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0]\n'
@@ -1006,6 +1017,44 @@ def upgrade_sys_top_audio_mode(path: Path) -> list[str]:
     text = text[:m.start()] + replacement + text[m.end():]
     write_text(path, text, nl)
     return [f'{path}: injected AUDIO_MODE override on AUDIO_SPDIF/R/L']
+
+
+def upgrade_sys_top_audio_mode_reg(path: Path, text: str, nl: str) -> list[str]:
+    """Registered-output form of `upgrade_sys_top_audio_mode`: rewrite the
+    `aud_*_q <=` selectors and declare the override wires after
+    `wire analog_l, analog_r;` (or just before `reg aud_spdif_q` when that
+    wire is absent), so the decl precedes the always block that uses it."""
+    m = _AUDIO_REG_RE.search(text)
+    if not m:
+        return [f'{path}: AUDIO_SPDIF/R/L assigns not found, AUDIO_MODE patch skipped']
+    indent = m.group('indent')
+    replacement = (
+        f'{indent}// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0]\n'
+        f'{indent}aud_spdif_q <= audio_route_i2s ? HDMI_LRCLK : spdif;\n'
+        f'{indent}aud_r_q     <= audio_route_i2s ? HDMI_I2S   : analog_r;\n'
+        f'{indent}aud_l_q     <= audio_route_i2s ? HDMI_SCLK  : analog_l;\n'
+        f'{indent}// [MiSTer-DB9 END]\n'
+    )
+    text = text[:m.start()] + replacement + text[m.end():]
+
+    def decl(ind: str) -> str:
+        return (
+            f'{ind}// [MiSTer-DB9 BEGIN] - AUDIO_MODE INI override of SW[0]\n'
+            f'{ind}wire [1:0] audio_mode_force = cfg[15:14];\n'
+            f'{ind}wire       audio_route_i2s  = (audio_mode_force == 2\'b00) ? (SW[0] | mcp_en) : audio_mode_force[0];\n'
+            f'{ind}// [MiSTer-DB9 END]\n'
+        )
+
+    w = _ANALOG_WIRE_RE.search(text, 0, m.start())
+    if w:
+        text = text[:w.end()] + '\n' + decl(w.group('indent')) + text[w.end():]
+    else:
+        r = _AUD_REG_DECL_RE.search(text, 0, m.start())
+        if not r:
+            return [f'{path}: reg aud_spdif_q not found, AUDIO_MODE patch skipped']
+        text = text[:r.start()] + decl(r.group('indent')) + '\n' + text[r.start():]
+    write_text(path, text, nl)
+    return [f'{path}: injected AUDIO_MODE override on registered aud_*_q']
 
 
 def resolve_hps_io(sys_dir: Path) -> Path:
