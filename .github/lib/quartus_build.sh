@@ -460,6 +460,12 @@ build_leg() {
     if [[ -f .gitmodules ]]; then
         git submodule update --init --recursive
     fi
+    # Optional per-core pre-build step, owned by the fork itself (e.g. building
+    # generated sources upstream does not commit). It lives at the repo root
+    # because setup_cicd replaces .github/ on every propagation.
+    if [[ -f db9_pre_build.sh ]]; then
+        bash db9_pre_build.sh
+    fi
     ./.github/materialize_secret.sh
     quartus_build_preflight
 
