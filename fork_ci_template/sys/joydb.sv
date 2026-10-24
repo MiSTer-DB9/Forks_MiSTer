@@ -40,6 +40,8 @@
 // ~1 us). While mt32_bclk_present is set the probe is off and the selector
 // acts as Off: every pin released, joydb_*/USER_OSD and the joy_raw buttons 0.
 // joy_raw keeps reporting the selected joy_type so Main never rewrites it.
+// The flag is also exported as mt32_present, so an MT32 core can open its
+// MIDI path for an RPi whose I2C is not wired to the user port.
 //
 // This file is fork-only (does not exist upstream), so it is implicitly
 // MiSTer-DB9. Only [MiSTer-DB9-Pro BEGIN/END] markers appear, to flag the
@@ -86,6 +88,11 @@ module joydb
     // games (ffight, captcomm, ...).
     output logic        pad_1_6btn,
     output logic        pad_2_6btn,
+
+    // MT32-pi BCLK detector result (CLK_JOY domain). Optional: MT32 cores use
+    // it to open MIDI for an RPi that streams I2S but has no I2C on the user
+    // port, so mt32_use never latches. Other cores leave it unbound.
+    output logic        mt32_present,
 
     // Programmable per-core button-remap matrix (UIO 0xFD selector load from
     // Main_MiSTer db9_map.cpp). joydb_*_mapped are joydb_1/joydb_2 rewired
@@ -150,6 +157,7 @@ always @(posedge clk) begin
 
     mt32_bclk_present <= |mt32_hold;
 end
+assign mt32_present = mt32_bclk_present;
 
 wire probe_active = OSD_STATUS & ~snac_active & ~mt32_primary_active & ~mt32_bclk_present;
 

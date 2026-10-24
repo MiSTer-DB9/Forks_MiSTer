@@ -3,7 +3,7 @@
 # -- runs the analyzer against the hand-built fixtures in
 # test/fixtures/mt32_gate/ and asserts exit code + a signature substring per
 # case. Locks in the FATAL tier (fleet-audit 0-false-positive contract):
-# both correct variants (always_comb + TRS-80) and the non-MT32 n/a case
+# the correct variants (always_comb, BCLK term, TRS-80) and the n/a case
 # must NOT FAIL; only the genuine Gate 1 / Gate 2 defects do.
 #
 #   python3 test/lib/test_mt32_gate_check.py   # -> "MT32GATE selftest: PASS"
@@ -21,6 +21,7 @@ FIX = os.path.join(HERE, "..", "fixtures", "mt32_gate")
 CASES = [
     ("good.sv",       0, "both anti-contention gates present"),
     ("good_trs80.sv", 0, "both anti-contention gates present"),
+    ("good_bclk.sv",  0, "both anti-contention gates present"),
     ("bad_gate1.sv",  1, "Gate 1 missing"),
     ("bad_gate2.sv",  1, "Gate 2 missing"),
     ("nonmt32.sv",    0, "n/a"),

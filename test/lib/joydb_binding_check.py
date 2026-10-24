@@ -17,12 +17,12 @@
 # non-ported / pristine upstream) is n/a -- there is no "legitimately
 # missing port" case (unlike satgate's InputTest 1'b1 tie), so this GATES.
 #
-# EXCEPTION -- OPTIONAL_PORTS (below): two canonical ports are excused. They
+# EXCEPTION -- OPTIONAL_PORTS (below): three canonical ports are excused. They
 # are ADVISORY OUTPUTS the WRAPPER_BLOCK deliberately does NOT emit (commit
-# a79778f) -- an unconnected output is harmless in Verilog (no silently-dead
-# path). The remap_default_* inputs are NOT excused: unbound, Quartus grounds
-# them, every DB9 button slot reads NONE and DB15/DB9MD face buttons go dead
-# on a stock MiSTer binary.
+# a79778f; mt32_present is bound by hand on MT32 cores only) -- an unconnected
+# output is harmless in Verilog (no silently-dead path). The remap_default_*
+# inputs are NOT excused: unbound, Quartus grounds them, every DB9 button slot
+# reads NONE and DB15/DB9MD face buttons go dead on a stock MiSTer binary.
 #
 # Also FATAL: the hps_io `.joy_raw` bound to an `OSD_STATUS ? ...` ternary.
 # Main_MiSTer needs DB9 button edges during gameplay for its idle timers
@@ -74,7 +74,7 @@ _CONN_RE = re.compile(r"\.\s*([A-Za-z_]\w*)\s*\(")
 # unconnected (commit a79778f). Unlike an unbound INPUT (controller path goes
 # silently dead), an unconnected OUTPUT is harmless in Verilog, so it must not
 # FATAL the binding completeness guard.
-OPTIONAL_OUTPUTS = {"pad_1_6btn", "pad_2_6btn"}
+OPTIONAL_OUTPUTS = {"pad_1_6btn", "pad_2_6btn", "mt32_present"}
 OPTIONAL_PORTS = OPTIONAL_OUTPUTS
 _GATED_JOY_RAW_RE = re.compile(r"\.\s*joy_raw\s*\(\s*OSD_STATUS\s*\?")
 

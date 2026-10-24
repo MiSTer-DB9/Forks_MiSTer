@@ -27,6 +27,7 @@ module tb_joydb_wrapper;
   logic [5:0]  remap_byte_cnt = 6'd0;
   logic [15:0] remap_din = 16'h0000;
   logic [15:0] joydb_1_mapped;
+  logic        mt32_present;
 
   logic [11:0] p1 = 12'h000, p2 = 12'h000;
   logic        bclk_on = 1'b0, bclk = 1'b0;  // MT32-pi I2S BCLK model on USER_IN[4]
@@ -87,6 +88,7 @@ module tb_joydb_wrapper;
     .remap_default_db15  ( 36'h98FBA7654 ),
     .remap_default_db9md ( 36'h98BFA7654 ),
     .joydb_1_mapped  ( joydb_1_mapped ),
+    .mt32_present    ( mt32_present   ),
     .joy_raw         ( joy_raw        )
   );
 
@@ -246,11 +248,13 @@ module tb_joydb_wrapper;
     chk("pre-bclk probe running",    dut.probe_active,  1'b1);
     // No pad or FSM strobe trips the detector (probe + DB15 runs above).
     chk("pre-bclk not present",      dut.mt32_bclk_present, 1'b0);
+    chk("pre-bclk mt32_present",     mt32_present,      1'b0);
     bclk_on = 1'b1;
     #500_000;   // 0.5 ms: below the 1 ms arm window
     chk("bclk 0.5ms not present",    dut.mt32_bclk_present, 1'b0);
     #700_000;   // 1.2 ms total: armed
     chk("bclk 1.2ms present",        dut.mt32_bclk_present, 1'b1);
+    chk("bclk 1.2ms mt32_present",   mt32_present,      1'b1);
     chk("bclk probe off",            dut.probe_active,  1'b0);
     chk("bclk OSD UPP released",     USER_PP_DRIVE,     8'b00000000);
     chk("bclk OSD UOUT released",    USER_OUT_DRIVE,    8'hFF);
@@ -271,6 +275,7 @@ module tb_joydb_wrapper;
     dut.mt32_hold = 23'd1000;
     #50_000;
     chk("unplug released",           dut.mt32_bclk_present, 1'b0);
+    chk("unplug mt32_present",       mt32_present,      1'b0);
     chk("unplug probe resumes",      dut.probe_active,  1'b1);
     chk("unplug saturn_probe boot",  USER_PP_DRIVE,     8'b01010100);
 

@@ -22,6 +22,11 @@
 #   * always_comb : `else if (mt32_use) begin USER_OUT[6:0] = USER_OUT_MT32;`
 #                   (Minimig / AtariST / X68000)
 #   * assign      : `... : mt32_use ? mt32_out : 8'hFF;`  (ao486)
+#   * BCLK term   : `mt32_use` widened to
+#                   `(mt32_use | (mt32_present & ~mt32_disable))`, so an RPi
+#                   with no I2C on the user port (Decapod) still gets MIDI;
+#                   mt32_present is the joydb I2S BCLK detector
+#                   (ao486 / AtariST / Minimig / X68000).
 #   * TRS-80      : both gated on `mt32_disable` directly.
 #
 # Severities (mirrors joydb_map_check.py's contract):
